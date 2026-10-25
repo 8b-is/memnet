@@ -6,7 +6,7 @@
 - **[January Paper](mem8-paper-January.md)** - Earlier theoretical work
 - **[Temporal Philosophy](mem8_temporal_philosophy.md)** - Time, memory, and decay dynamics
 - **[Wave-RNN Comparison](mem_8_vs_wrnn.md)** - Performance analysis vs Wave-RNN
-- **[MEMNET Protocol](ayeos_memnet_protocol.md)** - Context-aware routing protocol (also in [ayeos/](../ayeos/ayeos_memnet_protocol.md))
+- **[MEMNET Protocol](../ayeos/ayeos_memnet_protocol.md)** - Canonical context-aware routing protocol (symlinked at `ayeos_memnet_protocol.md`)
 
 ## Overview
 

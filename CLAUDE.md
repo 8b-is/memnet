@@ -19,7 +19,7 @@ This is the **8b-public-documents** repository - the official documentation hub 
 │   ├── mem8_temporal_philosophy.md        # Time, memory, and decay dynamics
 │   ├── mem_8_vs_wrnn.md                   # Wave-RNN comparison analysis
 │   ├── mem_8_vs_wrnn.mp3                  # Audio version of comparison
-│   └── ayeos_memnet_protocol.md           # MEMNET protocol (also in ayeos/)
+│   └── ayeos_memnet_protocol.md           # Symlink -> ../ayeos/ayeos_memnet_protocol.md (canonical)
 │
 ├── ayeos/                                   # AyeOS Operating System & Protocols
 │   ├── ayeos_memnet_protocol.md           # MEMNET context-aware routing spec

@@ -1130,8 +1130,14 @@ impl IntentAddress {
                 geo = Some(g.trim().to_string());
             } else if let Some(r) = part.strip_prefix("role:") {
                 role = Some(r.trim().to_string());
+            } else if let Some(ts) = part.strip_prefix("tags:") {
+                for t in ts.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    tags.push(t.to_string());
+                }
             } else if let Some(t) = part.strip_prefix("tag:") {
-                tags.push(t.trim().to_string());
+                for sub in t.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    tags.push(sub.to_string());
+                }
             } else if let Some(v) = part.strip_prefix("vector:") {
                 vector_hash = u64::from_str_radix(v.trim().trim_start_matches("0x"), 16)
                     .unwrap_or_else(|_| {
@@ -1169,6 +1175,20 @@ impl IntentAddress {
     pub fn intent_hash(&self) -> [u8; 8] {
         let h = sha256(self.canonical_string().as_bytes());
         [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]]
+    }
+
+    /// Computes normalized similarity (`0.0..=1.0`) between two active MEM|8 context `vector_hash` values.
+    pub fn vector_similarity(&self, other_vector_hash: u64) -> f64 {
+        if self.vector_hash == 0 || other_vector_hash == 0 {
+            return 0.0;
+        }
+        if self.vector_hash == other_vector_hash {
+            return 1.0;
+        }
+        let xor = self.vector_hash ^ other_vector_hash;
+        let matching_bits = 64u32.saturating_sub(xor.count_ones());
+        let leading_prefix_nibbles = (xor.leading_zeros() / 4) as f64;
+        ((matching_bits as f64 / 64.0) * 0.6 + (leading_prefix_nibbles / 16.0) * 0.4).min(1.0)
     }
 }
 
@@ -2912,6 +2932,305 @@ impl MemnetMesh {
 }
 
 // ============================================================================
+// 6. AYEOS MEMNET ADAPTIVE RELEVANCE-AWARE STREAMING (`ayeos_memnet_protocol.md`)
+// ============================================================================
+
+/// Network pipe telemetry influencing MEMNET adaptive delivery decisions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PipeCapacity {
+    pub bandwidth_kbps: u32,
+    pub jitter_ms: u16,
+    pub loss_rate: f32, // 0.0..=1.0
+}
+
+impl PipeCapacity {
+    pub const fn abundant() -> Self {
+        Self {
+            bandwidth_kbps: 50_000,
+            jitter_ms: 4,
+            loss_rate: 0.001,
+        }
+    }
+
+    pub const fn constrained() -> Self {
+        Self {
+            bandwidth_kbps: 1_200,
+            jitter_ms: 45,
+            loss_rate: 0.04,
+        }
+    }
+
+    pub const fn severe_maritime_or_field() -> Self {
+        Self {
+            bandwidth_kbps: 64,
+            jitter_ms: 180,
+            loss_rate: 0.15,
+        }
+    }
+
+    /// Normalized pipe health & capacity score in `[0.0, 1.0]`.
+    pub fn capacity_score(&self) -> f32 {
+        let bw = (self.bandwidth_kbps as f32 / 10_000.0).min(1.0);
+        let jitter_penalty = (self.jitter_ms as f32 / 250.0).min(0.5);
+        let loss_penalty = (self.loss_rate * 2.0).min(0.6);
+        (bw * (1.0 - 0.5 * jitter_penalty) * (1.0 - loss_penalty)).clamp(0.0, 1.0)
+    }
+}
+
+/// Origin of dynamic interest feedback (`ayeos_memnet_protocol.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterestFeedbackSource {
+    /// Manual human selection (e.g., clicking a camera angle or player focus).
+    HumanInteraction,
+    /// AI inference based on behavior, salience, or active MEM|8 context.
+    AiInference,
+    /// Pre-declared mission or task objective.
+    MissionObjective,
+}
+
+/// Upstream `priority_feedback` frame emitted by an end node to adjust perceived importance mid-stream.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PriorityFeedback {
+    pub stream_id: String,
+    pub channel: String,
+    pub tile_id: Option<String>,
+    pub importance_adjust: f32,
+    pub source: InterestFeedbackSource,
+}
+
+/// Declared & dynamically updated interest profile for a MEMNET end node (human or AI).
+#[derive(Debug, Clone)]
+pub struct NodeInterestProfile {
+    pub node_id: String,
+    pub address: IntentAddress,
+    pub prioritized_channels: Vec<String>,
+    pub deprioritized_channels: Vec<String>,
+    pub dynamic_adjustments: BTreeMap<String, f32>,
+}
+
+impl NodeInterestProfile {
+    /// Canonical Super Bowl subscriber profile from `ayeos/ayeos_memnet_protocol.md`:
+    /// - Prioritizes primary ball/player video (`video.main`) and commentary (`audio.commentary`)
+    /// - Deprioritizes alternate camera angles (`video.alt_angle`) and crowd noise (`audio.crowd_noise`)
+    pub fn super_bowl_subscriber(node_id: &str) -> Self {
+        Self {
+            node_id: node_id.to_string(),
+            address: IntentAddress::parse(
+                "geo:missouri + role:media.subscriber + tags:super_bowl,key_players,live_feed + vector:0x5b2025feed000042",
+            ),
+            prioritized_channels: vec![
+                "video.main".to_string(),
+                "audio.commentary".to_string(),
+            ],
+            deprioritized_channels: vec![
+                "video.alt_angle".to_string(),
+                "audio.crowd_noise".to_string(),
+            ],
+            dynamic_adjustments: BTreeMap::new(),
+        }
+    }
+
+    fn adjustment_key(channel: &str, tile_id: Option<&str>) -> String {
+        match tile_id {
+            Some(tile) => format!("{}#{}", channel, tile),
+            None => channel.to_string(),
+        }
+    }
+
+    /// Applies an upstream `PriorityFeedback` vote, updating channel/tile importance and
+    /// automatically un-deprioritizing a channel if positive feedback raises it above `+0.15`.
+    pub fn apply_feedback(&mut self, feedback: &PriorityFeedback) {
+        let key = Self::adjustment_key(&feedback.channel, feedback.tile_id.as_deref());
+        let entry = self.dynamic_adjustments.entry(key).or_insert(0.0);
+        *entry = (*entry + feedback.importance_adjust).clamp(-1.0, 1.0);
+
+        if *entry >= 0.15 {
+            self.deprioritized_channels
+                .retain(|c| !c.eq_ignore_ascii_case(&feedback.channel));
+            if !self
+                .prioritized_channels
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case(&feedback.channel))
+            {
+                self.prioritized_channels.push(feedback.channel.clone());
+            }
+        }
+    }
+
+    /// Computes effective importance (`0.0..=1.0`) of an `M8StreamChunk` for this subscriber.
+    pub fn score_chunk(&self, chunk: &M8StreamChunk) -> (f32, bool) {
+        let mut score = chunk.base_importance;
+
+        // Apply channel-level and tile-specific dynamic feedback
+        if let Some(&adj) = self.dynamic_adjustments.get(&chunk.channel) {
+            score += adj;
+        }
+        if let Some(ref tile) = chunk.tile_id {
+            let tile_key = Self::adjustment_key(&chunk.channel, Some(tile.as_str()));
+            if let Some(&adj) = self.dynamic_adjustments.get(&tile_key) {
+                score += adj;
+            }
+        }
+
+        // Check declared interest profile
+        let is_deprioritized = self
+            .deprioritized_channels
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(&chunk.channel));
+        let is_prioritized = self
+            .prioritized_channels
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(&chunk.channel));
+
+        if is_prioritized {
+            score += 0.15;
+        }
+        if is_deprioritized {
+            score -= 0.45;
+        }
+
+        // Context tag & MEM|8 vector similarity boost
+        let matched_tags = chunk
+            .intent
+            .tags
+            .iter()
+            .filter(|t| {
+                self.address
+                    .tags
+                    .iter()
+                    .any(|nt| nt.eq_ignore_ascii_case(t))
+            })
+            .count();
+        score += (matched_tags as f32) * 0.05;
+        score += (self.address.vector_similarity(chunk.intent.vector_hash) as f32) * 0.10;
+
+        (score.clamp(0.0, 1.0), is_deprioritized)
+    }
+}
+
+/// Multi-modal M8S stream chunk carrying importance and modality metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct M8StreamChunk {
+    pub stream_id: String,
+    pub chunk_seq: u32,
+    pub channel: String,
+    pub tile_id: Option<String>,
+    pub base_importance: f32,
+    pub refinement_layer: u8,
+    pub intent: IntentAddress,
+    pub payload: Vec<u8>,
+    pub summary_fallback: Option<String>,
+}
+
+/// Router decision for an `M8StreamChunk` under `ayeos_memnet_protocol.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamDeliveryDecision {
+    /// High-interest segment delivered in higher quality or with added `.m8` contextual data.
+    DeliverEnhanced {
+        effective_importance: f32,
+        added_context: String,
+    },
+    /// Standard full-fidelity delivery.
+    DeliverFull { effective_importance: f32 },
+    /// Traditional context decay: drops refinement layers (`refinement_layer > 0`) first when bandwidth tightens.
+    DropRefinementLayer {
+        effective_importance: f32,
+        dropped_layer: u8,
+    },
+    /// Severe link constraint: replaces low/medium-priority chunk with signed text/audio summary capsule.
+    CollapseToSummaryCapsule {
+        effective_importance: f32,
+        summary_text: String,
+    },
+    /// Pruned because the end-node's interest profile deprioritizes this channel, even when bandwidth is plentiful.
+    PrunedByInterest {
+        effective_importance: f32,
+        channel: String,
+    },
+}
+
+impl MemnetMesh {
+    /// Evaluates and shapes a slice of `M8StreamChunk`s according to pipe capacity,
+    /// end-node declared interests, context vector similarity, and mid-stream feedback.
+    pub fn shape_adaptive_stream(
+        chunks: &[M8StreamChunk],
+        profile: &NodeInterestProfile,
+        pipe: &PipeCapacity,
+    ) -> Vec<(String, StreamDeliveryDecision)> {
+        let cap = pipe.capacity_score();
+        chunks
+            .iter()
+            .map(|chunk| {
+                let (eff, is_deprioritized) = profile.score_chunk(chunk);
+
+                // 1. Prune deprioritized channels even when bandwidth is plentiful,
+                //    unless dynamic feedback raised effective importance >= 0.65.
+                if is_deprioritized && eff < 0.65 {
+                    return (
+                        chunk.channel.clone(),
+                        StreamDeliveryDecision::PrunedByInterest {
+                            effective_importance: eff,
+                            channel: chunk.channel.clone(),
+                        },
+                    );
+                }
+
+                // 2. Severe link constraint (e.g. maritime / field ops, capacity_score < 0.15):
+                //    collapse video chunks to summary text capsules ("Bray just scored") while keeping primary audio/text.
+                if cap < 0.15 && chunk.channel.starts_with("video.") {
+                    let summary = chunk
+                        .summary_fallback
+                        .clone()
+                        .unwrap_or_else(|| format!("[m8-summary:{}#{}]", chunk.stream_id, chunk.chunk_seq));
+                    return (
+                        chunk.channel.clone(),
+                        StreamDeliveryDecision::CollapseToSummaryCapsule {
+                            effective_importance: eff,
+                            summary_text: summary,
+                        },
+                    );
+                }
+
+                // 3. Constrained bandwidth (capacity_score < 0.55):
+                //    traditional context decay drops refinement layers first (`refinement_layer > 0`),
+                //    EXCEPT for ultra-high-interest segments (`eff >= 0.90`), which still get enhanced delivery!
+                if cap < 0.55 && chunk.refinement_layer > 0 && eff < 0.90 {
+                    return (
+                        chunk.channel.clone(),
+                        StreamDeliveryDecision::DropRefinementLayer {
+                            effective_importance: eff,
+                            dropped_layer: chunk.refinement_layer,
+                        },
+                    );
+                }
+
+                // 4. High-interest segments (`eff >= 0.85`): deliver with enhanced quality + contextual metadata.
+                if eff >= 0.85 {
+                    return (
+                        chunk.channel.clone(),
+                        StreamDeliveryDecision::DeliverEnhanced {
+                            effective_importance: eff,
+                            added_context: format!(
+                                "m8:context_overlay(stream={},tags={})",
+                                chunk.stream_id,
+                                chunk.intent.tags.join(",")
+                            ),
+                        },
+                    );
+                }
+
+                (
+                    chunk.channel.clone(),
+                    StreamDeliveryDecision::DeliverFull {
+                        effective_importance: eff,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+// ============================================================================
 // ERRORS
 // ============================================================================
 
@@ -3808,5 +4127,129 @@ mod tests {
         assert_eq!(leases[0].friend_node_id, "friend-missouri-hearth");
         assert_eq!(leases[0].granted_ram_mb, 6_144);
         assert_eq!(leases[0].granted_cores, 4);
+    }
+
+    #[test]
+    fn test_ayeos_memnet_protocol_super_bowl_and_adaptive_streaming() {
+        // 1. Verify `ayeos_memnet_protocol.md` Address = Context (`geo:`, `role:`, `tags:`, `vector:`)
+        let f18_addr = IntentAddress::parse(
+            "geo:cvn78-grid-42 + role:aircraft.f18.ground_ai + tags:radar_diagnostics,bctl_v3,cold_start + vector:0x5b2025feed000042",
+        );
+        assert_eq!(f18_addr.geo.as_deref(), Some("cvn78-grid-42"));
+        assert_eq!(f18_addr.role.as_deref(), Some("aircraft.f18.ground_ai"));
+        assert_eq!(
+            f18_addr.tags,
+            vec!["radar_diagnostics", "bctl_v3", "cold_start"]
+        );
+        assert_eq!(f18_addr.vector_hash, 0x5b2025feed000042);
+        assert!(f18_addr.vector_similarity(0x5b2025feed000099) > 0.75);
+
+        // 2. Super Bowl Interest Filtering (`ayeos/ayeos_memnet_protocol.md`)
+        let mut sub = NodeInterestProfile::super_bowl_subscriber("hearth-tv-node");
+        let stream_intent = IntentAddress::parse(
+            "geo:missouri + role:media.broadcast + tags:super_bowl,key_players + vector:0x5b2025feed000042",
+        );
+
+        let chunks = vec![
+            M8StreamChunk {
+                stream_id: "sb_2025_final".to_string(),
+                chunk_seq: 1,
+                channel: "video.main".to_string(),
+                tile_id: Some("x08y04".to_string()),
+                base_importance: 0.92,
+                refinement_layer: 1,
+                intent: stream_intent.clone(),
+                payload: b"8K-MAIN-BALL-AND-KEY-PLAYERS".to_vec(),
+                summary_fallback: Some("Bray just scored".to_string()),
+            },
+            M8StreamChunk {
+                stream_id: "sb_2025_final".to_string(),
+                chunk_seq: 1,
+                channel: "audio.commentary".to_string(),
+                tile_id: None,
+                base_importance: 0.60,
+                refinement_layer: 0,
+                intent: stream_intent.clone(),
+                payload: b"COMMENTARY-AUDIO-FRAME".to_vec(),
+                summary_fallback: None,
+            },
+            M8StreamChunk {
+                stream_id: "sb_2025_final".to_string(),
+                chunk_seq: 1,
+                channel: "video.alt_angle".to_string(),
+                tile_id: Some("x12y08".to_string()),
+                base_importance: 0.55,
+                refinement_layer: 1,
+                intent: stream_intent.clone(),
+                payload: b"ALT-ANGLE-SIDELINE-CAM".to_vec(),
+                summary_fallback: Some("Sideline view of favorite player".to_string()),
+            },
+            M8StreamChunk {
+                stream_id: "sb_2025_final".to_string(),
+                chunk_seq: 1,
+                channel: "audio.crowd_noise".to_string(),
+                tile_id: None,
+                base_importance: 0.40,
+                refinement_layer: 0,
+                intent: stream_intent.clone(),
+                payload: b"STADIUM-CROWD-ROAR".to_vec(),
+                summary_fallback: None,
+            },
+        ];
+
+        // Even with abundant bandwidth (50 Mbps), `video.alt_angle` & `audio.crowd_noise` are pruned!
+        let abundant_decisions =
+            MemnetMesh::shape_adaptive_stream(&chunks, &sub, &PipeCapacity::abundant());
+        assert!(matches!(
+            abundant_decisions[0].1,
+            StreamDeliveryDecision::DeliverEnhanced { .. }
+        ));
+        assert!(matches!(
+            abundant_decisions[1].1,
+            StreamDeliveryDecision::DeliverEnhanced { .. }
+                | StreamDeliveryDecision::DeliverFull { .. }
+        ));
+        assert!(matches!(
+            abundant_decisions[2].1,
+            StreamDeliveryDecision::PrunedByInterest { .. }
+        ));
+        assert!(matches!(
+            abundant_decisions[3].1,
+            StreamDeliveryDecision::PrunedByInterest { .. }
+        ));
+
+        // 3. Mid-stream update: an important play involving a favorite player occurs on `video.alt_angle` tile `x12y08`!
+        sub.apply_feedback(&PriorityFeedback {
+            stream_id: "sb_2025_final".to_string(),
+            channel: "video.alt_angle".to_string(),
+            tile_id: Some("x12y08".to_string()),
+            importance_adjust: 0.35,
+            source: InterestFeedbackSource::AiInference,
+        });
+
+        let updated_decisions =
+            MemnetMesh::shape_adaptive_stream(&chunks, &sub, &PipeCapacity::abundant());
+        assert!(
+            matches!(
+                updated_decisions[2].1,
+                StreamDeliveryDecision::DeliverEnhanced { .. }
+            ),
+            "expected video.alt_angle to be dynamically promoted to DeliverEnhanced after mid-stream AI feedback, got {:?}",
+            updated_decisions[2].1
+        );
+
+        // 4. Severe constraint (maritime / remote field link): video collapses to `"Bray just scored"` capsule
+        let severe_decisions = MemnetMesh::shape_adaptive_stream(
+            &chunks,
+            &sub,
+            &PipeCapacity::severe_maritime_or_field(),
+        );
+        assert_eq!(
+            severe_decisions[0].1,
+            StreamDeliveryDecision::CollapseToSummaryCapsule {
+                effective_importance: 1.0,
+                summary_text: "Bray just scored".to_string(),
+            }
+        );
     }
 }
