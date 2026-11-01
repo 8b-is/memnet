@@ -14,6 +14,7 @@
 //!    network paths or low-valence/silent nodes and routing 432 Hz care capsules + bridge relays.
 
 pub mod complex_ternary;
+pub mod sovereign_convergence;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -358,7 +359,7 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     }
     padded.extend_from_slice(&bit_len.to_be_bytes());
 
-    for chunk in padded.chunks_exact(64) {
+    for chunk in padded.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes([

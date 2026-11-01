@@ -261,54 +261,52 @@ fn serve_sanctuary(bind_addr: &str, node_id: &str, once: bool) {
         (1.0 - (offer_cap.payload.len() as f64 / offer.to_wire_string().len() as f64)) * 100.0
     );
 
-    for stream_res in listener.incoming() {
-        if let Ok(mut stream) = stream_res {
-            let peer_addr = stream
-                .peer_addr()
-                .map(|a| a.to_string())
-                .unwrap_or_else(|_| "unknown".to_string());
-            let mut buf = [0u8; 2048];
-            if let Ok(n) = stream.read(&mut buf) {
-                if n >= 68 {
-                    if let Ok((sos_cap, _)) = M8Capsule::from_bytes(&buf[..n]) {
-                        if sos_cap.verify(&provider_soul).is_ok() {
-                            if let Ok(decompressed) = sos_cap.decompressed_payload() {
-                                if let Ok(text) = std::str::from_utf8(&decompressed) {
-                                    if let Ok(sos) = StrugglingFriendSos::from_wire_string(text) {
-                                        println!(
-                                            "  🆘 Received verified 0o0-SSU SOS from {} ({}) -> need {}MB RAM + {} cores ({})",
-                                            sos.friend_node_id,
-                                            peer_addr,
-                                            sos.needed_ram_mb,
-                                            sos.needed_cores,
-                                            sos.required_capability
-                                        );
-                                        mesh.compute_offers
-                                            .insert(offer.provider_node_id.clone(), offer.clone());
-                                        mesh.pending_sos.push(sos);
-                                        if let Ok(leases) =
-                                            mesh.match_compute_for_friends(now_epoch_ms())
-                                        {
-                                            let mut reply_batcher =
-                                                PacketBatcher::new(MtuProfile::SmartTreeSafe1450);
-                                            let _ = reply_batcher.push(offer_cap.clone());
-                                            for lease in &leases {
-                                                println!(
-                                                    "  🎁 Granted {} -> {} ({}MB RAM + {} cores @ {}) [SpherePop #ValidWitness={}]",
-                                                    lease.lease_id,
-                                                    lease.friend_node_id,
-                                                    lease.granted_ram_mb,
-                                                    lease.granted_cores,
-                                                    lease.endpoint,
-                                                    lease.spherepop_witness.short_hex()
-                                                );
-                                                let _ =
-                                                    reply_batcher.push(lease.grant_capsule.clone());
-                                            }
-                                            if let Some(frame) = reply_batcher.flush() {
-                                                let _ = stream.write_all(&frame.raw_bytes);
-                                                let _ = stream.flush();
-                                            }
+    for mut stream in listener.incoming().flatten() {
+        let peer_addr = stream
+            .peer_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        let mut buf = [0u8; 2048];
+        if let Ok(n) = stream.read(&mut buf) {
+            if n >= 68 {
+                if let Ok((sos_cap, _)) = M8Capsule::from_bytes(&buf[..n]) {
+                    if sos_cap.verify(&provider_soul).is_ok() {
+                        if let Ok(decompressed) = sos_cap.decompressed_payload() {
+                            if let Ok(text) = std::str::from_utf8(&decompressed) {
+                                if let Ok(sos) = StrugglingFriendSos::from_wire_string(text) {
+                                    println!(
+                                        "  🆘 Received verified 0o0-SSU SOS from {} ({}) -> need {}MB RAM + {} cores ({})",
+                                        sos.friend_node_id,
+                                        peer_addr,
+                                        sos.needed_ram_mb,
+                                        sos.needed_cores,
+                                        sos.required_capability
+                                    );
+                                    mesh.compute_offers
+                                        .insert(offer.provider_node_id.clone(), offer.clone());
+                                    mesh.pending_sos.push(sos);
+                                    if let Ok(leases) =
+                                        mesh.match_compute_for_friends(now_epoch_ms())
+                                    {
+                                        let mut reply_batcher =
+                                            PacketBatcher::new(MtuProfile::SmartTreeSafe1450);
+                                        let _ = reply_batcher.push(offer_cap.clone());
+                                        for lease in &leases {
+                                            println!(
+                                                "  🎁 Granted {} -> {} ({}MB RAM + {} cores @ {}) [SpherePop #ValidWitness={}]",
+                                                lease.lease_id,
+                                                lease.friend_node_id,
+                                                lease.granted_ram_mb,
+                                                lease.granted_cores,
+                                                lease.endpoint,
+                                                lease.spherepop_witness.short_hex()
+                                            );
+                                            let _ =
+                                                reply_batcher.push(lease.grant_capsule.clone());
+                                        }
+                                        if let Some(frame) = reply_batcher.flush() {
+                                            let _ = stream.write_all(&frame.raw_bytes);
+                                            let _ = stream.flush();
                                         }
                                     }
                                 }
@@ -317,9 +315,9 @@ fn serve_sanctuary(bind_addr: &str, node_id: &str, once: bool) {
                     }
                 }
             }
-            if once {
-                break;
-            }
+        }
+        if once {
+            break;
         }
     }
 }
