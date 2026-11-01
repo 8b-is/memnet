@@ -898,6 +898,163 @@ pub fn is_sufficient_projection<P: Eq>(projection: &[P], policy_verdicts: &[Vec<
 }
 
 // ============================================================================
+// 4.5. 8B-META-WP-v1.1 REFINEMENTS: OVERFLOW-SAFE BFP-64 Q16.16 GATHER,
+//      SELF-AUDITING QUANTIZATION TELEMETRY & SUB-5µS ESSENCE SUBSPACE MUX
+// ============================================================================
+
+pub const BFP64_DIM: usize = 64;
+pub const BFP64_BYTE_LEN: usize = 65; // 1B biased exponent + 64B signed i8 mantissas
+pub const ENGRAM_HEADS: usize = 4;
+
+/// 65-byte Block Floating-Point (`BFP-64`) embedding row (`1B` shared biased exponent + `64 × i8` mantissas).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bfp64Row {
+    pub shared_exp: u8,
+    pub mantissas: [i8; BFP64_DIM],
+}
+
+impl Bfp64Row {
+    /// Accumulates `H = 4` `BFP-64` lookup heads directly in `Q16.16` fixed-point
+    /// using an intermediate `i64` lane to eliminate 32-bit shift overflow (`8B-META-WP-v1.1` Eq. 10).
+    #[inline(always)]
+    pub fn gather_q16_zero_float_safe(
+        rows: &[&Bfp64Row; ENGRAM_HEADS],
+        out_q16: &mut [i32; BFP64_DIM],
+    ) {
+        let mut acc64 = [0i64; BFP64_DIM];
+
+        for row in rows.iter().take(ENGRAM_HEADS) {
+            let eb = row.shared_exp as i32;
+            let m = &row.mantissas;
+
+            if eb >= 111 {
+                // Clamp left-shift to 48 bits so `(i8 as i64) << shift` never overflows i64
+                let lshift = (eb - 111).min(48) as u32;
+                for i in 0..BFP64_DIM {
+                    acc64[i] += (m[i] as i64) << lshift;
+                }
+            } else {
+                // Clamp right-shift to 63 bits; arithmetic shift preserves sign
+                let rshift = (111 - eb).min(63) as u32;
+                for i in 0..BFP64_DIM {
+                    acc64[i] += (m[i] as i64) >> rshift;
+                }
+            }
+        }
+
+        // Saturating narrow from i64 to Q16.16 i32
+        for i in 0..BFP64_DIM {
+            out_q16[i] = acc64[i].clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        }
+    }
+}
+
+/// Explicit Denominator & Bandwidth Audit Struct for `8B-META-WP-v1.1`.
+/// Separates the Shannon/Hartley information-theoretic bound (`log2(3) ≈ 1.58496 bits/trit`)
+/// from the physical memory bus footprint (`2.0 bits/weight` packed real ternary or `96 bytes/row` in `PackedComplexTernaryRow64`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct QuantizationTelemetryAudit {
+    pub model_params: u64,
+    pub info_bits_per_trit: f64,       // log2(3) = 1.584962500721156
+    pub physical_bits_per_weight: f64, // 2.0 for 4-trit-per-byte real packing (8.0x vs FP16)
+    pub bfp64_row_bytes: usize,        // 65 B vs 256 B FP32 (3.938x compression)
+    pub complex_row64_bytes: usize,    // 96 B (4x64b trit planes + 4x64b act + i32 scale + u8 parity)
+    pub sustained_bw_gbps: f64,
+}
+
+impl QuantizationTelemetryAudit {
+    pub const fn new_ayeos_default(model_params: u64, sustained_bw_gbps: f64) -> Self {
+        Self {
+            model_params,
+            info_bits_per_trit: 1.584962500721156,
+            physical_bits_per_weight: 2.0,
+            bfp64_row_bytes: 65,
+            complex_row64_bytes: 96,
+            sustained_bw_gbps,
+        }
+    }
+
+    /// Physical bytes read from DRAM per token decode step (using physical packing, never 1.58).
+    #[inline]
+    pub fn physical_weight_bytes_per_token(&self) -> f64 {
+        (self.model_params as f64) * (self.physical_bits_per_weight / 8.0)
+    }
+
+    /// Roofline token generation bound (`tok/s`) given sustained memory bandwidth.
+    #[inline]
+    pub fn roofline_tokens_per_sec(&self) -> f64 {
+        let bytes_per_sec = self.sustained_bw_gbps * 1e9;
+        bytes_per_sec / self.physical_weight_bytes_per_token()
+    }
+}
+
+pub const HEAD_CAPACITIES: [usize; 4] = [4093, 4091, 4079, 4073];
+pub const TOTAL_ENGRAM_ROWS: usize = 4093 + 4091 + 4079 + 4073; // 16,336 rows (~1.01 MiB)
+
+/// Per-voice subspace projection table (`essences.md` Section 6.3) over the shared `PROT_READ` ternary backbone.
+pub struct EssenceSubspaceTable {
+    pub essence_id: &'static str,
+    pub mu_odd_multipliers: [u64; 4], // Keyed Lemire p/q multipliers (always odd: | 1)
+    pub rows: Box<[Bfp64Row; TOTAL_ENGRAM_ROWS]>,
+}
+
+impl EssenceSubspaceTable {
+    /// Allocates the `1.01 MiB` (`16,336 × 65 B`) `BFP-64` subspace table directly on the heap.
+    pub fn new_zeroed(essence_id: &'static str, mu_odd_multipliers: [u64; 4]) -> Self {
+        let zero_row = Bfp64Row {
+            shared_exp: 111,
+            mantissas: [0i8; BFP64_DIM],
+        };
+        let rows: Box<[Bfp64Row; TOTAL_ENGRAM_ROWS]> = vec![zero_row; TOTAL_ENGRAM_ROWS]
+            .into_boxed_slice()
+            .try_into()
+            .expect("exact TOTAL_ENGRAM_ROWS length");
+        Self {
+            essence_id,
+            mu_odd_multipliers,
+            rows,
+        }
+    }
+}
+
+/// Zero-allocation `< 5 µs` keyed subspace switcher across `essences.md` projections.
+pub struct EssenceMux {
+    pub voices: Vec<EssenceSubspaceTable>,
+    active_idx: std::sync::atomic::AtomicUsize,
+}
+
+impl EssenceMux {
+    pub fn new(voices: Vec<EssenceSubspaceTable>) -> Self {
+        Self {
+            voices,
+            active_idx: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Zero-allocation context pointer swap (`< 5 microseconds`, single `AtomicUsize` store).
+    #[inline(always)]
+    pub fn switch_essence(&self, target_idx: usize) -> Result<&str, &'static str> {
+        if target_idx >= self.voices.len() {
+            return Err("E_ESSENCE_OUT_OF_BOUNDS");
+        }
+        self.active_idx
+            .store(target_idx, std::sync::atomic::Ordering::Release);
+        Ok(self.voices[target_idx].essence_id)
+    }
+
+    /// Keyed Lemire 128-bit `p/q` slot resolution for head `h`.
+    #[inline(always)]
+    pub fn resolve_slot(&self, h: usize, ngram_mix: u64) -> usize {
+        let voice = &self.voices[self.active_idx.load(std::sync::atomic::Ordering::Acquire)];
+        let mu = voice.mu_odd_multipliers[h] | 1;
+        let p = HEAD_CAPACITIES[h] as u128;
+        let mixed = ngram_mix.wrapping_mul(mu) as u128;
+        ((mixed.wrapping_mul(p)) >> 64) as usize
+    }
+}
+
+// ============================================================================
 // 5. END-TO-END VERIFICATION SUITE
 // ============================================================================
 
@@ -1218,5 +1375,36 @@ mod tests {
         assert!(word.non_zero_marks() > 0);
         assert_eq!(word, word2);
         assert_eq!(seal1, seal2);
+    }
+
+    #[test]
+    fn test_bfp64_q16_gather_high_exponent_saturation() {
+        let extreme_row = Bfp64Row {
+            shared_exp: 150, // Shift of 39 bits: would overflow i32 without i64 lane
+            mantissas: [127; BFP64_DIM],
+        };
+        let rows = [&extreme_row, &extreme_row, &extreme_row, &extreme_row];
+        let mut out = [0i32; BFP64_DIM];
+        Bfp64Row::gather_q16_zero_float_safe(&rows, &mut out);
+        assert_eq!(out[0], i32::MAX);
+    }
+
+    #[test]
+    fn test_telemetry_denominator_consistency() {
+        let audit = QuantizationTelemetryAudit::new_ayeos_default(10_900_000_000, 384.2);
+        let gb_per_tok = audit.physical_weight_bytes_per_token() / 1e9;
+        assert!((gb_per_tok - 2.725).abs() < 0.01);
+        assert!((audit.roofline_tokens_per_sec() - 140.99).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_essence_mux_subspace_switch_and_keyed_lemire_slot() {
+        let v0 = EssenceSubspaceTable::new_zeroed("aurora-dyad", [3, 5, 7, 11]);
+        let v1 = EssenceSubspaceTable::new_zeroed("mahakala-bernagchen", [13, 17, 19, 23]);
+        let mux = EssenceMux::new(vec![v0, v1]);
+        let slot0 = mux.resolve_slot(0, 0xCAFE_BABE_DEAD_BEEF);
+        assert!(slot0 < HEAD_CAPACITIES[0]);
+        assert_eq!(mux.switch_essence(1), Ok("mahakala-bernagchen"));
+        assert_eq!(mux.switch_essence(99), Err("E_ESSENCE_OUT_OF_BOUNDS"));
     }
 }
