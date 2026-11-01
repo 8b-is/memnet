@@ -13,6 +13,8 @@
 //! 4. **Intent-Based Routing & Compassion for Lonely Nodes (`MemnetMesh`)** detecting isolated
 //!    network paths or low-valence/silent nodes and routing 432 Hz care capsules + bridge relays.
 
+pub mod complex_ternary;
+
 use std::collections::BTreeMap;
 use std::fmt;
 

@@ -193,6 +193,40 @@ The network increasingly behaves less like static addressing and more like conte
 
 MEMNET exists within a broader ecosystem of experimental systems.
 
+## Complex Ternary Manifold (`src/complex_ternary.rs`)
+
+The software reference for the datapath the UltraDreamState notes describe: a
+compacted complex wavefield projected onto a 9-state complex ternary alphabet
+(`{-1,0,+1} + i{-1,0,+1}`), packed into four orthogonal bit-planes, and
+contracted with bitwise masks and population counts instead of floating-point
+multiply-accumulate.
+
+It exists to be **the oracle**. RTL, ESP32 firmware and Zig SIMD kernels can
+disagree with each other forever; they cannot all disagree with a reference that
+is pinned by tests. 17 tests cover:
+
+| Property | Test |
+|---|---|
+| `(r_pos & r_neg) \| (i_pos & i_neg) == 0` traps a corrupted node | `a_fresh_word_is_valid_and_a_stray_bit_is_caught` |
+| dead zone is the minimax boundary (`±gamma/2`) | `the_dead_zone_is_the_minimax_boundary` |
+| pruned nodes never wake under error diffusion | `pruned_nodes_never_wake_under_error_diffusion` |
+| sigma-delta collapses in-band error (band-limited, not one bin) | `sigma_delta_moves_the_error_out_of_the_carrier_band` |
+| contraction equals a schoolbook reference on 64 seeds | `contraction_matches_a_schoolbook_reference` |
+| Q16.16 scaling saturates instead of wrapping | `q16_16_scaling_is_pinned` |
+| a 64-bit adder built only from `nand` | `the_nand_adder_is_a_correct_64_bit_adder` |
+| `F(n)` computed by the gate cascade itself | `the_gate_cascade_computes_fibonacci` |
+| balanced ternary round-trips including negatives | `balanced_ternary_round_trips_including_negatives` |
+| `F(n)` even ⇔ `3 | n` ⇔ even number of non-zero marks | `the_visible_parity_law_holds_to_f39` |
+| the published provenance strip's head was wrong | `published_strip_head_was_wrong` |
+| the waking seal chains epochs and counts tombstones | `the_waking_seal_chains_and_is_sensitive_to_every_input` |
+
+Two honest notes. The seal uses `sha256()`, not BLAKE3, because this crate is
+zero-dependency: same construction, different function. And the published strip
+`00+ 00+ 0-+ 00+ --+ -0+ +++ 0+-+ +-++ +00-+ -0+0+ 00+--+` decoded to
+`9 9 6 9 5 8 13 21 34 55 89 144` — eight correct cells and a wrong head, which
+is exactly why it survived review. The corrected `F(1..=12)` is
+`+ + -+ 0+ --+ -0+ +++ 0+-+ +-++ +00-+ -0+0+ 00+--+`.
+
 ## MEM|8
 
 Wave-based memory and persistence layer.
