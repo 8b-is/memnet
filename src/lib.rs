@@ -15,6 +15,9 @@
 
 pub mod complex_ternary;
 pub mod sovereign_convergence;
+pub mod spherepopfold;
+pub mod ultrafold_v2;
+pub mod wave_v2;
 
 use std::collections::BTreeMap;
 use std::fmt;
