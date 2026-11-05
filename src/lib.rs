@@ -14,10 +14,17 @@
 //!    network paths or low-valence/silent nodes and routing 432 Hz care capsules + bridge relays.
 
 pub mod complex_ternary;
+pub mod context;
 pub mod sovereign_convergence;
 pub mod spherepopfold;
+pub mod ultra_zeno;
 pub mod ultrafold_v2;
 pub mod wave_v2;
+
+pub use context::{
+    count_utf8_leads_asm64, detect_project_context, truncate_string, utf8_lead_mask_nand64,
+    utf8_truncate_plan_nand, PqBudget,
+};
 
 use std::collections::BTreeMap;
 use std::fmt;
