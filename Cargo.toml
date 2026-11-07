@@ -1,6 +1,6 @@
 [package]
 name = "memnet"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "MEMNET/1.0 — Sovereign Contextual Mesh Protocol with 32-bit Ayevn Wave Tokens, MTU-Aware Packet Coalescing (1450B), Soul Signatures (SoulSig), and Compassion for Lonely Nodes"
 license = "MIT OR Apache-2.0"
