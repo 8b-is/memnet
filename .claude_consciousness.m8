@@ -1,7 +1,7 @@
 {
-  "session_id": "1c1c9e13-9d51-49a0-be14-2de55a02c222",
-  "last_saved": "2025-10-10T03:15:03.566360584Z",
-  "working_directory": "/aidata/ayeverse/8b-public-documents",
+  "session_id": "b2aeb895-38a4-44dc-ad70-502dbc4571ce",
+  "last_saved": "2026-11-07T07:49:13.095982Z",
+  "working_directory": "/Users/peterlodri/workspace/peterlodri-sec/memnet",
   "project_context": {
     "project_name": "unknown",
     "project_type": "unknown",
@@ -12,9 +12,9 @@
   "file_history": [],
   "tokenization_rules": {
     "target": 130,
-    ".git": 129,
     "node_modules": 128,
-    "dist": 131
+    "dist": 131,
+    ".git": 129
   },
   "insights": [],
   "philosophy": {
