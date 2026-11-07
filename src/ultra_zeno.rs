@@ -264,8 +264,8 @@ pub fn run_ultra_zeno_bottleneck(params: &UltraZenoParams) -> Result<UltraZenoSu
             adj.add_undirected_edge(u, v);
         }
     }
-    for u in 0..n {
-        degrees[u] = adj.row(u).iter().map(|w| w.count_ones() as usize).sum();
+    for (u, deg) in degrees.iter_mut().enumerate().take(n) {
+        *deg = adj.row(u).iter().map(|w| w.count_ones() as usize).sum();
     }
 
     let deg_probs: Vec<f64> = degrees.iter().map(|&d| (d + 1) as f64).collect();
