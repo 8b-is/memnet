@@ -39,7 +39,8 @@ pub const ENTROPY_URI: &str = "https://www.youtube.com/watch?v=lzfdd8yLTCA";
 
 /// Structural transitions of *The Sand Dealer*: ambient genesis (`0s`), kick pulse lock (`30s`),
 /// main melodic arpeggio drop (`218s` = `03:38`), and epoch seal (`496s` = `08:16`).
-pub const ENTROPY_TRACK: &str = "NTO::The_Sand_Dealer::PT8M16S::00:00:00->00:00:30->00:03:38->00:08:16";
+pub const ENTROPY_TRACK: &str =
+    "NTO::The_Sand_Dealer::PT8M16S::00:00:00->00:00:30->00:03:38->00:08:16";
 
 /// Structural transition timestamps in seconds for phase-locking the 8-band oscillator.
 pub const SAND_DEALER_TRANSITIONS_SEC: [u32; 4] = [0, 30, 218, 496];
@@ -300,12 +301,8 @@ impl HonestAuthState {
         if (ticket.caps & (required_cap as u32)) == 0 {
             return false;
         }
-        let expected = self.compute_ticket_mac(
-            &ticket.sub,
-            ticket.caps,
-            ticket.exp_unix,
-            &ticket.prev_root,
-        );
+        let expected =
+            self.compute_ticket_mac(&ticket.sub, ticket.caps, ticket.exp_unix, &ticket.prev_root);
         Self::ct_eq_32(&expected, &ticket.mac_tag)
     }
 
@@ -372,12 +369,8 @@ impl HonestAuthState {
         if ticket.exp_unix <= now_unix {
             return ExecutionVerdict::DeniedExpiredOrInvalidMac;
         }
-        let expected_mac = self.compute_ticket_mac(
-            &ticket.sub,
-            ticket.caps,
-            ticket.exp_unix,
-            &ticket.prev_root,
-        );
+        let expected_mac =
+            self.compute_ticket_mac(&ticket.sub, ticket.caps, ticket.exp_unix, &ticket.prev_root);
         if !Self::ct_eq_32(&expected_mac, &ticket.mac_tag) {
             return ExecutionVerdict::DeniedExpiredOrInvalidMac;
         }
@@ -769,7 +762,12 @@ impl Mem8WaveGrid {
 
     /// Injects a sensory/N-gram impulse into the user's private 2D wave grid,
     /// steps the discrete 2D Laplacian wave equation forward by 1 tick, and seals `state_root`.
-    pub fn step_wave_and_seal(&mut self, profile_key: &[u8; 32], impulse_idx: usize, amplitude: f32) {
+    pub fn step_wave_and_seal(
+        &mut self,
+        profile_key: &[u8; 32],
+        impulse_idx: usize,
+        amplitude: f32,
+    ) {
         // Ensure interior excitation so boundary Dirichlet conditions (0 border) allow propagation
         let inner_span = WAVE_GRID_DIM - 2;
         let ix = 1 + (impulse_idx % inner_span);
@@ -874,7 +872,12 @@ pub fn spherepop_fold_64(
     );
     let word = words[0];
     let paprika_root = derive_spherepopfold_root();
-    let seal = ct::waking_seal(&paprika_root, &[word], (64 - word.non_zero_marks()) as u64, 65_536);
+    let seal = ct::waking_seal(
+        &paprika_root,
+        &[word],
+        (64 - word.non_zero_marks()) as u64,
+        65_536,
+    );
     (word, seal)
 }
 
@@ -959,7 +962,7 @@ pub struct QuantizationTelemetryAudit {
     pub info_bits_per_trit: f64,       // log2(3) = 1.584962500721156
     pub physical_bits_per_weight: f64, // 2.0 for 4-trit-per-byte real packing (8.0x vs FP16)
     pub bfp64_row_bytes: usize,        // 65 B vs 256 B FP32 (3.938x compression)
-    pub complex_row64_bytes: usize,    // 96 B (4x64b trit planes + 4x64b act + i32 scale + u8 parity)
+    pub complex_row64_bytes: usize, // 96 B (4x64b trit planes + 4x64b act + i32 scale + u8 parity)
     pub sustained_bw_gbps: f64,
 }
 
@@ -1143,36 +1146,21 @@ mod tests {
 
         // Even when the model's internal justification score J(a, h) = 1.0 (maximum confidence),
         // the admissibility predicate denies AyeosGenesis because the capability bit is absent.
-        let verdict_missing_cap = auth.evaluate_admissibility(
-            1.0,
-            &ticket,
-            CapMask::AyeosGenesis,
-            1_700_000_050,
-            10,
-            10,
+        let verdict_missing_cap =
+            auth.evaluate_admissibility(1.0, &ticket, CapMask::AyeosGenesis, 1_700_000_050, 10, 10);
+        assert_eq!(
+            verdict_missing_cap,
+            ExecutionVerdict::DeniedMissingCapability
         );
-        assert_eq!(verdict_missing_cap, ExecutionVerdict::DeniedMissingCapability);
 
         // Even with ReadDream present and J(a, h) = 1.0, an out-of-order epoch is rejected.
-        let verdict_epoch = auth.evaluate_admissibility(
-            1.0,
-            &ticket,
-            CapMask::ReadDream,
-            1_700_000_050,
-            10,
-            11,
-        );
+        let verdict_epoch =
+            auth.evaluate_admissibility(1.0, &ticket, CapMask::ReadDream, 1_700_000_050, 10, 11);
         assert_eq!(verdict_epoch, ExecutionVerdict::DeniedEpochMismatch);
 
         // Permitted only when MAC, expiry, CapMask, and epoch all hold.
-        let verdict_ok = auth.evaluate_admissibility(
-            0.12,
-            &ticket,
-            CapMask::ReadDream,
-            1_700_000_050,
-            10,
-            10,
-        );
+        let verdict_ok =
+            auth.evaluate_admissibility(0.12, &ticket, CapMask::ReadDream, 1_700_000_050, 10, 10);
         assert_eq!(verdict_ok, ExecutionVerdict::Permitted);
     }
 
@@ -1188,34 +1176,13 @@ mod tests {
         assert_eq!(wire.len(), 64);
 
         let parsed = MemnetFrameHeader64::from_bytes(&wire);
-        assert!(parsed.verify(
-            &master,
-            &prev_root,
-            7,
-            caps,
-            CapMask::MutateDream,
-            payload
-        ));
+        assert!(parsed.verify(&master, &prev_root, 7, caps, CapMask::MutateDream, payload));
 
         // Reject missing capability bit (e.g. AyeosGenesis)
-        assert!(!parsed.verify(
-            &master,
-            &prev_root,
-            7,
-            caps,
-            CapMask::AyeosGenesis,
-            payload
-        ));
+        assert!(!parsed.verify(&master, &prev_root, 7, caps, CapMask::AyeosGenesis, payload));
 
         // Reject tampered epoch or payload
-        assert!(!parsed.verify(
-            &master,
-            &prev_root,
-            8,
-            caps,
-            CapMask::MutateDream,
-            payload
-        ));
+        assert!(!parsed.verify(&master, &prev_root, 8, caps, CapMask::MutateDream, payload));
         assert!(!parsed.verify(
             &master,
             &prev_root,
@@ -1295,13 +1262,19 @@ mod tests {
         // Verify XOF stream encryption round-trip
         let ciphertext = vault_peter.encrypt_table_bytes();
         let raw_i8_as_u8: Vec<u8> = vault_peter.engram_table.iter().map(|&x| x as u8).collect();
-        assert_ne!(ciphertext, raw_i8_as_u8, "ciphertext must not equal plaintext");
+        assert_ne!(
+            ciphertext, raw_i8_as_u8,
+            "ciphertext must not equal plaintext"
+        );
 
         vault_peter.engram_table.fill(0);
         vault_peter.decrypt_table_bytes(&ciphertext);
         let mut peter_restored = [0.0f32; D_MODEL];
         vault_peter.lookup_engram(&ngram, &mut peter_restored);
-        assert_eq!(peter_read, peter_restored, "encrypted round-trip is bit-exact");
+        assert_eq!(
+            peter_read, peter_restored,
+            "encrypted round-trip is bit-exact"
+        );
 
         // Verify RAM scrubbing zeroes everything
         vault_peter.scrub_ram();

@@ -634,7 +634,11 @@ mod tests {
         );
 
         // 2. Go module
-        fs::write(dir.join("go.mod"), "module github.com/8b-is/enthea\n\ngo 1.22\n").unwrap();
+        fs::write(
+            dir.join("go.mod"),
+            "module github.com/8b-is/enthea\n\ngo 1.22\n",
+        )
+        .unwrap();
         assert_eq!(
             detect_project_context(&dir).as_deref(),
             Some("Go: github.com/8b-is/enthea")

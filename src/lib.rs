@@ -2587,10 +2587,8 @@ impl MemnetMesh {
             for clause in s.split('|') {
                 let trimmed = clause.trim();
                 let lower = trimmed.to_ascii_lowercase();
-                let is_primary_field = matches!(
-                    lower.as_str(),
-                    "offer" | "care" | "grant" | "sos"
-                ) || lower.starts_with("node=")
+                let is_primary_field = matches!(lower.as_str(), "offer" | "care" | "grant" | "sos")
+                    || lower.starts_with("node=")
                     || lower.starts_with("provider=")
                     || lower.starts_with("friend=")
                     || lower.starts_with("target=")
@@ -2655,11 +2653,7 @@ impl MemnetMesh {
             // 1. BM25F weighted field lexical score
             let mut bm25f = 0.0_f64;
             for qt in &unique_q_terms {
-                let tf_f: f64 = doc
-                    .iter()
-                    .filter(|(t, _)| t == qt)
-                    .map(|(_, w)| *w)
-                    .sum();
+                let tf_f: f64 = doc.iter().filter(|(t, _)| t == qt).map(|(_, w)| *w).sum();
                 if tf_f > 0.0 {
                     let df = docs_weighted
                         .iter()
@@ -2759,12 +2753,12 @@ impl MemnetMesh {
                 Some(c) => {
                     let matching = cap.tokens.iter().filter(|t| t.concept == c).count();
                     if matching > 0 {
-                        let lead_bonus = if cap.tokens.first().map(|t| t.concept == c).unwrap_or(false)
-                        {
-                            0.35
-                        } else {
-                            0.0
-                        };
+                        let lead_bonus =
+                            if cap.tokens.first().map(|t| t.concept == c).unwrap_or(false) {
+                                0.35
+                            } else {
+                                0.0
+                            };
                         let density_bonus =
                             0.25 * ((matching as f64) / (cap.tokens.len().max(1) as f64));
                         1.75 + lead_bonus + density_bonus
@@ -2787,10 +2781,12 @@ impl MemnetMesh {
                         .tokens
                         .iter()
                         .map(|t| {
-                            let dv = (t.wave.valence as f64 - target_wave.valence as f64).abs() / 7.0;
-                            let da = (t.wave.arousal as f64 - target_wave.arousal as f64).abs() / 7.0;
-                            let dd =
-                                (t.wave.dominance as f64 - target_wave.dominance as f64).abs() / 3.0;
+                            let dv =
+                                (t.wave.valence as f64 - target_wave.valence as f64).abs() / 7.0;
+                            let da =
+                                (t.wave.arousal as f64 - target_wave.arousal as f64).abs() / 7.0;
+                            let dd = (t.wave.dominance as f64 - target_wave.dominance as f64).abs()
+                                / 3.0;
                             (1.0 - (dv + da + dd) / 3.0).max(0.0)
                         })
                         .fold(0.0_f64, f64::max);
@@ -2861,47 +2857,52 @@ impl MemnetMesh {
         capsules: &[M8Capsule],
         queries: &[Mem8RetrievalQuery<'_>],
     ) -> Mem8RetrievalEvalReceipt {
-        let eval_method = |run: &dyn Fn(&Mem8RetrievalQuery<'_>) -> Vec<(usize, f64)>| -> Mem8RetrievalMetrics {
-            let t0 = std::time::Instant::now();
-            let n = queries.len().max(1) as f64;
-            let mut p1_sum = 0.0_f64;
-            let mut mrr_sum = 0.0_f64;
-            let mut ndcg3_sum = 0.0_f64;
-            let mut margin_sum = 0.0_f64;
+        let eval_method =
+            |run: &dyn Fn(&Mem8RetrievalQuery<'_>) -> Vec<(usize, f64)>| -> Mem8RetrievalMetrics {
+                let t0 = std::time::Instant::now();
+                let n = queries.len().max(1) as f64;
+                let mut p1_sum = 0.0_f64;
+                let mut mrr_sum = 0.0_f64;
+                let mut ndcg3_sum = 0.0_f64;
+                let mut margin_sum = 0.0_f64;
 
-            for q in queries {
-                let ranked = run(q);
-                if ranked.first().map(|(idx, _)| *idx == q.relevant_idx).unwrap_or(false) {
-                    p1_sum += 1.0;
-                }
-                if let Some(pos) = ranked.iter().position(|(idx, _)| *idx == q.relevant_idx) {
-                    mrr_sum += 1.0 / ((pos + 1) as f64);
-                    if pos < 3 {
-                        // Binary relevance DCG@3 with IDCG@3 = 1.0 / log2(2) = 1.0
-                        ndcg3_sum += 1.0 / ((pos as f64 + 2.0).log2());
+                for q in queries {
+                    let ranked = run(q);
+                    if ranked
+                        .first()
+                        .map(|(idx, _)| *idx == q.relevant_idx)
+                        .unwrap_or(false)
+                    {
+                        p1_sum += 1.0;
                     }
+                    if let Some(pos) = ranked.iter().position(|(idx, _)| *idx == q.relevant_idx) {
+                        mrr_sum += 1.0 / ((pos + 1) as f64);
+                        if pos < 3 {
+                            // Binary relevance DCG@3 with IDCG@3 = 1.0 / log2(2) = 1.0
+                            ndcg3_sum += 1.0 / ((pos as f64 + 2.0).log2());
+                        }
+                    }
+                    let target_score = ranked
+                        .iter()
+                        .find(|(idx, _)| *idx == q.relevant_idx)
+                        .map(|(_, s)| *s)
+                        .unwrap_or(0.0);
+                    let best_distractor = ranked
+                        .iter()
+                        .filter(|(idx, _)| *idx != q.relevant_idx)
+                        .map(|(_, s)| *s)
+                        .fold(0.0_f64, f64::max);
+                    margin_sum += target_score - best_distractor;
                 }
-                let target_score = ranked
-                    .iter()
-                    .find(|(idx, _)| *idx == q.relevant_idx)
-                    .map(|(_, s)| *s)
-                    .unwrap_or(0.0);
-                let best_distractor = ranked
-                    .iter()
-                    .filter(|(idx, _)| *idx != q.relevant_idx)
-                    .map(|(_, s)| *s)
-                    .fold(0.0_f64, f64::max);
-                margin_sum += target_score - best_distractor;
-            }
-            let elapsed_us = t0.elapsed().as_micros() as u64;
-            Mem8RetrievalMetrics {
-                precision_at_1: p1_sum / n,
-                mrr: mrr_sum / n,
-                ndcg_at_3: ndcg3_sum / n,
-                mean_top1_margin: margin_sum / n,
-                elapsed_us,
-            }
-        };
+                let elapsed_us = t0.elapsed().as_micros() as u64;
+                Mem8RetrievalMetrics {
+                    precision_at_1: p1_sum / n,
+                    mrr: mrr_sum / n,
+                    ndcg_at_3: ndcg3_sum / n,
+                    mean_top1_margin: margin_sum / n,
+                    elapsed_us,
+                }
+            };
 
         let naive_overlap = eval_method(&|q| {
             Self::retrieve_capsules_naive_overlap(capsules, q.query_text)
@@ -3191,10 +3192,9 @@ impl MemnetMesh {
                 // 2. Severe link constraint (e.g. maritime / field ops, capacity_score < 0.15):
                 //    collapse video chunks to summary text capsules ("Bray just scored") while keeping primary audio/text.
                 if cap < 0.15 && chunk.channel.starts_with("video.") {
-                    let summary = chunk
-                        .summary_fallback
-                        .clone()
-                        .unwrap_or_else(|| format!("[m8-summary:{}#{}]", chunk.stream_id, chunk.chunk_seq));
+                    let summary = chunk.summary_fallback.clone().unwrap_or_else(|| {
+                        format!("[m8-summary:{}#{}]", chunk.stream_id, chunk.chunk_seq)
+                    });
                     return (
                         chunk.channel.clone(),
                         StreamDeliveryDecision::CollapseToSummaryCapsule {
@@ -3843,7 +3843,8 @@ mod tests {
         let intent_mlx = IntentAddress::parse("geo:nearby + role:compute-sanctuary + tag:mlx");
         let intent_care = IntentAddress::parse("geo:tokyo + role:sanctuary + tag:compassion");
         let intent_s9u = IntentAddress::parse("geo:any + role:compute-sanctuary + tag:vulkan");
-        let intent_grant = IntentAddress::parse("geo:nearby + role:uganda-school-pi + tag:compute-grant");
+        let intent_grant =
+            IntentAddress::parse("geo:nearby + role:uganda-school-pi + tag:compute-grant");
 
         // 0: Distractor for Query 1 (shares intent_mlx & 432Hz & trailing Concept::ComputeOffer, repeats terms out-of-order in chatter)
         let cap0 = M8Capsule::create_signed_kompressed(
@@ -4100,7 +4101,9 @@ mod tests {
         let decoded = decode_kompress_super_ultra(&compressed).expect("decode s24u 0o0-SSU");
         assert_eq!(decoded, wire.as_bytes());
 
-        let witness = offer.evaluate_spherepop().expect("valid s24u SpherePop witness");
+        let witness = offer
+            .evaluate_spherepop()
+            .expect("valid s24u SpherePop witness");
         assert_eq!(witness.sphere_depth, 3);
 
         let s24u_soul = SoulIdentity::from_constellation_seed(

@@ -27,10 +27,8 @@ impl PackedComplexTernaryRow64 {
     /// Computes the 8-bit hardware parity byte across the four ternary bit-planes.
     #[inline(always)]
     pub const fn compute_parity_byte(re_pos: u64, re_neg: u64, im_pos: u64, im_neg: u64) -> u8 {
-        let folded = re_pos
-            ^ re_neg.rotate_left(13)
-            ^ im_pos.rotate_left(29)
-            ^ im_neg.rotate_left(47);
+        let folded =
+            re_pos ^ re_neg.rotate_left(13) ^ im_pos.rotate_left(29) ^ im_neg.rotate_left(47);
         (folded.count_ones() as u8) ^ 0xA5
     }
 

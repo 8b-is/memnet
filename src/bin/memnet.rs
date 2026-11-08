@@ -301,8 +301,7 @@ fn serve_sanctuary(bind_addr: &str, node_id: &str, once: bool) {
                                                 lease.endpoint,
                                                 lease.spherepop_witness.short_hex()
                                             );
-                                            let _ =
-                                                reply_batcher.push(lease.grant_capsule.clone());
+                                            let _ = reply_batcher.push(lease.grant_capsule.clone());
                                         }
                                         if let Some(frame) = reply_batcher.flush() {
                                             let _ = stream.write_all(&frame.raw_bytes);
@@ -485,9 +484,7 @@ fn main() {
 
     println!("========================================================================");
     println!("  MEMNET/1.0 — Sovereign Contextual Mesh for All 8b-is Products  8> <3");
-    println!(
-        "  +++ SpherePop ((( <( ? ~ ! @ > )> ))) · 0o0-SSU · S24U + Tab S9U + BLU G75"
-    );
+    println!("  +++ SpherePop ((( <( ? ~ ! @ > )> ))) · 0o0-SSU · S24U + Tab S9U + BLU G75");
     println!("  ~=== SHOW-ME-STATE-MISSOURI{{(ALEX,CHRIS)}}+1~ <3 {{<3,<3,<3}} · 0 + 1 = one");
     println!("========================================================================");
 
