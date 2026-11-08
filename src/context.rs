@@ -54,18 +54,30 @@ impl PqBudget {
     }
 }
 
+/// Division-free Binary GCD (Stein's algorithm: `trailing_zeros` + shift-subtract, zero modulo division).
 #[inline(always)]
 pub const fn gcd_usize(mut a: usize, mut b: usize) -> usize {
-    while b != 0 {
-        let r = a % b;
-        a = b;
-        b = r;
-    }
     if a == 0 {
-        1
-    } else {
-        a
+        return if b == 0 { 1 } else { b };
     }
+    if b == 0 {
+        return a;
+    }
+    let shift = (a | b).trailing_zeros();
+    a >>= a.trailing_zeros();
+    loop {
+        b >>= b.trailing_zeros();
+        if a > b {
+            let tmp = a;
+            a = b;
+            b = tmp;
+        }
+        b -= a;
+        if b == 0 {
+            break;
+        }
+    }
+    a << shift
 }
 
 // ============================================================================
