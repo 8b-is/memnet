@@ -100,9 +100,7 @@ mod tests {
         let row2 = pack_row_sigma_delta_64_v2_bit_exact(&re_q16, &im_q16, 65_536);
         assert_eq!(row1, row2);
         assert!(row1.verify_interlock().is_ok());
-        let (re_e, im_e) = row1
-            .contract_row64_popcnt(&row2)
-            .expect("valid POPCNT contraction");
+        let (re_e, im_e) = row1.contract_row64_popcnt(&row2).expect("valid POPCNT contraction");
         assert!(re_e > 0);
         assert_eq!(im_e, 0);
     }

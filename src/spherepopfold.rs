@@ -37,9 +37,7 @@ impl PackedComplexTernaryRow64 {
     pub fn verify_interlock(&self) -> Result<(), SpherepopError> {
         let forbidden = (self.re_pos & self.re_neg) | (self.im_pos & self.im_neg);
         if forbidden != 0 {
-            return Err(SpherepopError::ParityInterlockViolation {
-                forbidden_mask: forbidden,
-            });
+            return Err(SpherepopError::ParityInterlockViolation { forbidden_mask: forbidden });
         }
         let expected =
             Self::compute_parity_byte(self.re_pos, self.re_neg, self.im_pos, self.im_neg);

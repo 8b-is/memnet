@@ -21,7 +21,7 @@
 //! - `f32` appears in the *packing* step only, where the source wavefield is
 //!   real-valued. The contraction path is integer-exact.
 
-use crate::sha256;
+use crate::Sha256Hasher;
 
 // ============================================================================
 // 1. THE WORD: 64 complex ternary nodes in 4 orthogonal bit-planes
@@ -41,15 +41,11 @@ pub struct ComplexWord64 {
 }
 
 impl ComplexWord64 {
-    pub const ZERO: Self = Self {
-        r_pos: 0,
-        r_neg: 0,
-        i_pos: 0,
-        i_neg: 0,
-    };
+    pub const ZERO: Self = Self { r_pos: 0, r_neg: 0, i_pos: 0, i_neg: 0 };
 
     /// The invariant `(r_pos & r_neg) | (i_pos & i_neg) == 0`.
-    pub fn is_valid(&self) -> bool {
+    #[inline]
+    pub const fn is_valid(&self) -> bool {
         self.parity_fault() == 0
     }
 
@@ -57,17 +53,20 @@ impl ComplexWord64 {
     ///
     /// On silicon this is the trap line: a single-event upset that sets one bit
     /// in the wrong plane lands here instead of silently flipping a sign.
-    pub fn parity_fault(&self) -> u64 {
+    #[inline]
+    pub const fn parity_fault(&self) -> u64 {
         (self.r_pos & self.r_neg) | (self.i_pos & self.i_neg)
     }
 
     /// Number of non-zero nodes (real **or** imaginary component).
-    pub fn non_zero_marks(&self) -> u32 {
+    #[inline]
+    pub const fn non_zero_marks(&self) -> u32 {
         ((self.r_pos | self.r_neg) | (self.i_pos | self.i_neg)).count_ones()
     }
 
     /// Real component of node `index` as `-1`, `0`, or `1`.
-    pub fn real_trit(&self, index: usize) -> i8 {
+    #[inline]
+    pub const fn real_trit(&self, index: usize) -> i8 {
         let bit = 1u64 << index;
         if self.r_pos & bit != 0 {
             1
@@ -79,7 +78,8 @@ impl ComplexWord64 {
     }
 
     /// Imaginary component of node `index` as `-1`, `0`, or `1`.
-    pub fn imag_trit(&self, index: usize) -> i8 {
+    #[inline]
+    pub const fn imag_trit(&self, index: usize) -> i8 {
         let bit = 1u64 << index;
         if self.i_pos & bit != 0 {
             1
@@ -107,15 +107,14 @@ pub struct PackConfig {
 }
 
 impl Default for PackConfig {
+    #[inline]
     fn default() -> Self {
-        Self {
-            gamma: 1.0,
-            carrier_rad: 0.0,
-        }
+        Self { gamma: 1.0, carrier_rad: 0.0 }
     }
 }
 
 impl PackConfig {
+    #[inline]
     pub fn dead_zone(&self) -> f32 {
         self.gamma * 0.5
     }
@@ -131,6 +130,27 @@ pub fn quantise(value: f32, dead_zone: f32) -> i8 {
     } else {
         0
     }
+}
+
+/// Zero-allocation memoryless packing of a single 64-node complex block onto the stack.
+#[inline]
+pub fn pack_word64_memoryless(u: &[f32; 64], v: &[f32; 64], cfg: PackConfig) -> ComplexWord64 {
+    let dead = cfg.dead_zone();
+    let mut word = ComplexWord64::ZERO;
+    for i in 0..64 {
+        let bit = 1u64 << i;
+        match quantise(u[i], dead) {
+            1 => word.r_pos |= bit,
+            -1 => word.r_neg |= bit,
+            _ => {}
+        }
+        match quantise(v[i], dead) {
+            1 => word.i_pos |= bit,
+            -1 => word.i_neg |= bit,
+            _ => {}
+        }
+    }
+    word
 }
 
 /// Memoryless packing: what a naive `round()`-style projection does.
@@ -156,6 +176,46 @@ pub fn pack_row_memoryless(u: &[f32], v: &[f32], cfg: PackConfig) -> Vec<Complex
         }
     }
     words
+}
+
+/// Zero-allocation first-order spatial sigma-delta packing of a 64-node block on the stack.
+#[inline]
+pub fn pack_word64_sigma_delta(u: &[f32; 64], v: &[f32; 64], cfg: PackConfig) -> ComplexWord64 {
+    let dead = cfg.dead_zone();
+    let (tap_re, tap_im) = (cfg.carrier_rad.cos(), cfg.carrier_rad.sin());
+    let mut word = ComplexWord64::ZERO;
+    let (mut err_re, mut err_im) = (0.0f32, 0.0f32);
+
+    for i in 0..64 {
+        let re = u[i];
+        let im = v[i];
+        if re == 0.0 && im == 0.0 {
+            continue;
+        }
+        let bit = 1u64 << i;
+        let fb_re = tap_re * err_re - tap_im * err_im;
+        let fb_im = tap_re * err_im + tap_im * err_re;
+        let shaped_re = re + fb_re;
+        let shaped_im = im + fb_im;
+
+        let q_re = quantise(shaped_re, dead);
+        let q_im = quantise(shaped_im, dead);
+
+        match q_re {
+            1 => word.r_pos |= bit,
+            -1 => word.r_neg |= bit,
+            _ => {}
+        }
+        match q_im {
+            1 => word.i_pos |= bit,
+            -1 => word.i_neg |= bit,
+            _ => {}
+        }
+
+        err_re = clamp_to_dead_zone(shaped_re - cfg.gamma * q_re as f32, dead);
+        err_im = clamp_to_dead_zone(shaped_im - cfg.gamma * q_im as f32, dead);
+    }
+    word
 }
 
 /// First-order spatial sigma-delta packing with a carrier-tuned feedback tap.
@@ -247,6 +307,7 @@ pub fn contract_word(w: &ComplexWord64, x: &ComplexWord64) -> (i32, i32) {
 }
 
 /// Contract a whole row of words. Returns the unscaled integer accumulator.
+#[inline]
 pub fn contract_row(w: &[ComplexWord64], x: &[ComplexWord64]) -> (i64, i64) {
     let mut acc = (0i64, 0i64);
     for (a, b) in w.iter().zip(x.iter()) {
@@ -258,6 +319,7 @@ pub fn contract_row(w: &[ComplexWord64], x: &[ComplexWord64]) -> (i64, i64) {
 }
 
 /// Apply the outer block scale and return Q16.16, the canonical wire format.
+#[inline]
 pub fn scale_q16_16(acc: i64, gamma: f32) -> i32 {
     let scaled = acc as f32 * gamma * 65536.0;
     scaled.clamp(i32::MIN as f32, i32::MAX as f32) as i32
@@ -375,10 +437,7 @@ pub fn parse_balanced_ternary(text: &str) -> Option<i64> {
 
 /// `F(1..=count)`, one cell each, as the published provenance strip.
 pub fn fib_strip(count: usize) -> String {
-    (1..=count)
-        .map(|n| balanced_ternary(fib_nand(n) as i64))
-        .collect::<Vec<_>>()
-        .join(" ")
+    (1..=count).map(|n| balanced_ternary(fib_nand(n) as i64)).collect::<Vec<_>>().join(" ")
 }
 
 /// The strip as it should read for `F(1)` through `F(12)`.
@@ -397,10 +456,7 @@ pub fn correct_fib_strip_f1_12() -> String {
 /// parity of how many non-zero digits it carries. Signs are irrelevant.
 pub fn fib_parity_law_holds(n: usize) -> bool {
     let value = fib_nand(n);
-    let marks = balanced_ternary(value as i64)
-        .chars()
-        .filter(|c| *c != '0')
-        .count();
+    let marks = balanced_ternary(value as i64).chars().filter(|c| *c != '0').count();
     let even = value.is_multiple_of(2);
     even == marks.is_multiple_of(2) && even == n.is_multiple_of(3)
 }
@@ -409,29 +465,30 @@ pub fn fib_parity_law_holds(n: usize) -> bool {
 // 5. THE WAKING SEAL
 // ============================================================================
 
-/// Domain-separated digest over a compacted state.
+/// Domain-separated digest over a compacted state (zero heap allocations).
 ///
 /// `previous` chains epochs; `pruned` carries the tombstone count so that a
 /// state which forgot nothing cannot claim a seal from one that pruned. See the
 /// module docs: this is SHA-256, not BLAKE3.
+#[inline]
 pub fn waking_seal(
     previous: &[u8; 32],
     state: &[ComplexWord64],
     pruned: u64,
     phase_lock_q16_16: i32,
 ) -> [u8; 32] {
-    let mut transcript = Vec::with_capacity(32 + state.len() * 32 + 16);
-    transcript.extend_from_slice(b"memnet.complex_ternary.waking_seal.v1\0");
-    transcript.extend_from_slice(previous);
+    let mut hasher = Sha256Hasher::new();
+    hasher.update(b"memnet.complex_ternary.waking_seal.v1\0");
+    hasher.update(previous);
     for word in state {
-        transcript.extend_from_slice(&word.r_pos.to_le_bytes());
-        transcript.extend_from_slice(&word.r_neg.to_le_bytes());
-        transcript.extend_from_slice(&word.i_pos.to_le_bytes());
-        transcript.extend_from_slice(&word.i_neg.to_le_bytes());
+        hasher.update(&word.r_pos.to_le_bytes());
+        hasher.update(&word.r_neg.to_le_bytes());
+        hasher.update(&word.i_pos.to_le_bytes());
+        hasher.update(&word.i_neg.to_le_bytes());
     }
-    transcript.extend_from_slice(&pruned.to_le_bytes());
-    transcript.extend_from_slice(&phase_lock_q16_16.to_le_bytes());
-    sha256(&transcript)
+    hasher.update(&pruned.to_le_bytes());
+    hasher.update(&phase_lock_q16_16.to_le_bytes());
+    hasher.finalize()
 }
 
 #[cfg(test)]
@@ -469,12 +526,7 @@ mod tests {
 
     #[test]
     fn a_fresh_word_is_valid_and_a_stray_bit_is_caught() {
-        let w = ComplexWord64 {
-            r_pos: 0b1010,
-            r_neg: 0b0100,
-            i_pos: 0,
-            i_neg: 0,
-        };
+        let w = ComplexWord64 { r_pos: 0b1010, r_neg: 0b0100, i_pos: 0, i_neg: 0 };
         assert!(w.is_valid());
         assert_eq!(w.parity_fault(), 0);
 
@@ -497,14 +549,7 @@ mod tests {
     fn memoryless_packing_places_trits_by_sign() {
         let u = [3.0, -3.0, 0.1, 0.0, -0.9, 0.0, 0.0, 0.0];
         let v = [0.0, 0.0, 0.0, -2.0, 0.0, 1.5, 0.0, 0.0];
-        let words = pack_row_memoryless(
-            &u,
-            &v,
-            PackConfig {
-                gamma: 2.0,
-                carrier_rad: 0.0,
-            },
-        );
+        let words = pack_row_memoryless(&u, &v, PackConfig { gamma: 2.0, carrier_rad: 0.0 });
 
         assert_eq!(words.len(), 1);
         assert_eq!(words[0].real_trit(0), 1);
@@ -526,14 +571,7 @@ mod tests {
             v[i] = -5.0 + i as f32 * 0.1;
         }
 
-        let words = pack_row_sigma_delta(
-            &u,
-            &v,
-            PackConfig {
-                gamma: 2.0,
-                carrier_rad: 0.0,
-            },
-        );
+        let words = pack_row_sigma_delta(&u, &v, PackConfig { gamma: 2.0, carrier_rad: 0.0 });
         let word = words[0];
 
         for i in 8..64 {
@@ -592,10 +630,7 @@ mod tests {
         let n = 512usize;
         let k0 = 0.15f32;
         let amplitude = 1.6f32;
-        let cfg = PackConfig {
-            gamma: amplitude,
-            carrier_rad: k0,
-        };
+        let cfg = PackConfig { gamma: amplitude, carrier_rad: k0 };
 
         let u: Vec<f32> = (0..n).map(|i| amplitude * (k0 * i as f32).cos()).collect();
         let v: Vec<f32> = (0..n).map(|i| amplitude * (k0 * i as f32).sin()).collect();
@@ -613,14 +648,8 @@ mod tests {
     fn packing_is_deterministic() {
         let u: Vec<f32> = (0..128).map(|i| ((i % 11) as f32 - 5.0) * 0.4).collect();
         let v: Vec<f32> = (0..128).map(|i| ((i % 7) as f32 - 3.0) * 0.6).collect();
-        let cfg = PackConfig {
-            gamma: 1.5,
-            carrier_rad: 0.1,
-        };
-        assert_eq!(
-            pack_row_sigma_delta(&u, &v, cfg),
-            pack_row_sigma_delta(&u, &v, cfg)
-        );
+        let cfg = PackConfig { gamma: 1.5, carrier_rad: 0.1 };
+        assert_eq!(pack_row_sigma_delta(&u, &v, cfg), pack_row_sigma_delta(&u, &v, cfg));
     }
 
     #[test]
@@ -628,11 +657,7 @@ mod tests {
         for seed in 0..64u64 {
             let (w, x) = (deterministic_word(seed), deterministic_word(seed * 7 + 3));
             assert!(w.is_valid() && x.is_valid());
-            assert_eq!(
-                contract_word(&w, &x),
-                reference_contract(&w, &x),
-                "seed {seed}"
-            );
+            assert_eq!(contract_word(&w, &x), reference_contract(&w, &x), "seed {seed}");
         }
     }
 
@@ -640,12 +665,7 @@ mod tests {
     fn contraction_with_the_conjugate_is_the_energy() {
         let w = deterministic_word(42);
         // w · conj(w) is real; w · w would be w² and is not what we want here.
-        let conj = ComplexWord64 {
-            r_pos: w.r_pos,
-            r_neg: w.r_neg,
-            i_pos: w.i_neg,
-            i_neg: w.i_pos,
-        };
+        let conj = ComplexWord64 { r_pos: w.r_pos, r_neg: w.r_neg, i_pos: w.i_neg, i_neg: w.i_pos };
         let (re, im) = contract_word(&w, &conj);
 
         let mut energy = 0i32;
@@ -661,11 +681,7 @@ mod tests {
         assert_eq!(scale_q16_16(1, 1.0), 65_536);
         assert_eq!(scale_q16_16(2, 0.5), 65_536);
         assert_eq!(scale_q16_16(0, 9.0), 0);
-        assert_eq!(
-            scale_q16_16(i64::MAX, 1.0),
-            i32::MAX,
-            "saturates, never wraps"
-        );
+        assert_eq!(scale_q16_16(i64::MAX, 1.0), i32::MAX, "saturates, never wraps");
     }
 
     #[test]
@@ -697,9 +713,7 @@ mod tests {
 
     #[test]
     fn the_gate_cascade_computes_fibonacci() {
-        let table = [
-            0u64, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610,
-        ];
+        let table = [0u64, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610];
         for (n, expected) in table.iter().enumerate() {
             assert_eq!(fib_nand(n), *expected, "F({n})");
         }
@@ -714,24 +728,15 @@ mod tests {
                 text.chars().all(|c| matches!(c, '-' | '0' | '+')),
                 "{value} encoded as {text}"
             );
-            assert_eq!(
-                parse_balanced_ternary(&text),
-                Some(value),
-                "{value} -> {text}"
-            );
+            assert_eq!(parse_balanced_ternary(&text), Some(value), "{value} -> {text}");
         }
     }
 
     #[test]
     fn published_examples_decode_exactly() {
         // The worked examples from the note, LSB-first.
-        for (text, value) in [
-            ("--+", 5i64),
-            ("-0+", 8),
-            ("+++", 13),
-            ("0+-+", 21),
-            ("00+--+", 144),
-        ] {
+        for (text, value) in [("--+", 5i64), ("-0+", 8), ("+++", 13), ("0+-+", 21), ("00+--+", 144)]
+        {
             assert_eq!(parse_balanced_ternary(text), Some(value), "{text}");
             assert_eq!(balanced_ternary(value), text, "{value}");
         }
@@ -760,17 +765,10 @@ mod tests {
             .map(|cell| parse_balanced_ternary(cell).unwrap())
             .collect();
         assert_eq!(published_head, vec![9, 9, 6, 9], "this is what shipped");
-        assert_ne!(
-            published_head,
-            vec![0, 1, 1, 2],
-            "and this is what it should be"
-        );
+        assert_ne!(published_head, vec![0, 1, 1, 2], "and this is what it should be");
 
         // The corrected strip, from the encoder itself.
-        assert_eq!(
-            correct_fib_strip_f1_12(),
-            "+ + -+ 0+ --+ -0+ +++ 0+-+ +-++ +00-+ -0+0+ 00+--+"
-        );
+        assert_eq!(correct_fib_strip_f1_12(), "+ + -+ 0+ --+ -0+ +++ 0+-+ +-++ +00-+ -0+0+ 00+--+");
     }
 
     #[test]
@@ -778,33 +776,13 @@ mod tests {
         let state = vec![deterministic_word(1), deterministic_word(2)];
         let base = waking_seal(&[0u8; 32], &state, 7, 65_536);
 
-        assert_eq!(
-            base,
-            waking_seal(&[0u8; 32], &state, 7, 65_536),
-            "deterministic"
-        );
-        assert_ne!(
-            base,
-            waking_seal(&[1u8; 32], &state, 7, 65_536),
-            "epoch chains"
-        );
-        assert_ne!(
-            base,
-            waking_seal(&[0u8; 32], &state, 8, 65_536),
-            "tombstones count"
-        );
-        assert_ne!(
-            base,
-            waking_seal(&[0u8; 32], &state, 7, 65_537),
-            "phase lock counts"
-        );
+        assert_eq!(base, waking_seal(&[0u8; 32], &state, 7, 65_536), "deterministic");
+        assert_ne!(base, waking_seal(&[1u8; 32], &state, 7, 65_536), "epoch chains");
+        assert_ne!(base, waking_seal(&[0u8; 32], &state, 8, 65_536), "tombstones count");
+        assert_ne!(base, waking_seal(&[0u8; 32], &state, 7, 65_537), "phase lock counts");
 
         let mut tampered = state.clone();
         tampered[0].r_pos ^= 1;
-        assert_ne!(
-            base,
-            waking_seal(&[0u8; 32], &tampered, 7, 65_536),
-            "state counts"
-        );
+        assert_ne!(base, waking_seal(&[0u8; 32], &tampered, 7, 65_536), "state counts");
     }
 }

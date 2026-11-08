@@ -94,11 +94,7 @@ pub struct BitMatrix64 {
 impl BitMatrix64 {
     pub fn new(n: usize) -> Self {
         let words_per_row = n.div_ceil(64);
-        Self {
-            num_vertices: n,
-            words_per_row,
-            data: vec![0u64; n * words_per_row],
-        }
+        Self { num_vertices: n, words_per_row, data: vec![0u64; n * words_per_row] }
     }
 
     #[inline]
@@ -118,10 +114,7 @@ impl BitMatrix64 {
 
 #[inline]
 fn intersect_popcnt(row: &[u64], mask: &[u64]) -> usize {
-    row.iter()
-        .zip(mask.iter())
-        .map(|(&a, &b)| (a & b).count_ones() as usize)
-        .sum()
+    row.iter().zip(mask.iter()).map(|(&a, &b)| (a & b).count_ones() as usize).sum()
 }
 
 /// Computes the Structural Minimum Description Length (MDL) of a graph under partition `parts`.
@@ -141,18 +134,15 @@ pub fn compute_structural_mdl(
     let model_header_bits = (n as f64) * k_log2 + (num_pairs as f64) * 16.0;
 
     let words_per_row = adj.words_per_row;
-    let masks: Vec<Vec<u64>> = parts
-        .iter()
-        .map(|p| {
-            let mut m = vec![0u64; words_per_row];
-            for &v in p {
-                if v < n {
-                    m[v >> 6] |= 1u64 << (v & 63);
-                }
+    let mut masks = vec![0u64; k * words_per_row];
+    for (p_idx, p) in parts.iter().enumerate() {
+        let base = p_idx * words_per_row;
+        for &v in p {
+            if v < n {
+                masks[base + (v >> 6)] |= 1u64 << (v & 63);
             }
-            m
-        })
-        .collect();
+        }
+    }
 
     let mut residual_entropy_bits = 0.0f64;
     let mut total_edges = 0usize;
@@ -160,12 +150,10 @@ pub fn compute_structural_mdl(
 
     for i in 0..k {
         let vi = &parts[i];
+        let mask_i = &masks[i * words_per_row..(i + 1) * words_per_row];
         if vi.len() > 1 {
-            let intra_edges: usize = vi
-                .iter()
-                .map(|&u| intersect_popcnt(adj.row(u), &masks[i]))
-                .sum::<usize>()
-                / 2;
+            let intra_edges: usize =
+                vi.iter().map(|&u| intersect_popcnt(adj.row(u), mask_i)).sum::<usize>() / 2;
             total_edges += intra_edges;
             let max_intra = vi.len() * (vi.len() - 1) / 2;
             let d_ii = intra_edges as f64 / (max_intra as f64);
@@ -177,10 +165,8 @@ pub fn compute_structural_mdl(
             if vi.is_empty() || vj.is_empty() {
                 continue;
             }
-            let bip_edges: usize = vi
-                .iter()
-                .map(|&u| intersect_popcnt(adj.row(u), &masks[j]))
-                .sum();
+            let mask_j = &masks[j * words_per_row..(j + 1) * words_per_row];
+            let bip_edges: usize = vi.iter().map(|&u| intersect_popcnt(adj.row(u), mask_j)).sum();
             total_edges += bip_edges;
 
             let pair_cap = (vi.len() * vj.len()) as f64;
@@ -193,19 +179,13 @@ pub fn compute_structural_mdl(
         }
     }
 
-    let global_density = if naive_graph_bits > 0.0 {
-        (total_edges as f64) / naive_graph_bits
-    } else {
-        0.0
-    };
+    let global_density =
+        if naive_graph_bits > 0.0 { (total_edges as f64) / naive_graph_bits } else { 0.0 };
     let prior_er_bits = naive_graph_bits * binary_entropy_bits(global_density);
     let total_mdl_bits = model_header_bits + residual_entropy_bits;
     let mutual_info = (prior_er_bits - residual_entropy_bits).max(0.0);
-    let compression_ratio = if total_mdl_bits > 0.0 {
-        naive_graph_bits / total_mdl_bits
-    } else {
-        1.0
-    };
+    let compression_ratio =
+        if total_mdl_bits > 0.0 { naive_graph_bits / total_mdl_bits } else { 1.0 };
 
     (
         MdlCompressionTelemetry {
@@ -290,15 +270,17 @@ pub fn run_ultra_zeno_bottleneck(params: &UltraZenoParams) -> Result<UltraZenoSu
     let mut optimal_num_parts = 2usize;
     let mut optimal_zeno_step = 0usize;
 
+    let mut sorted_vertices: Vec<usize> = (0..n).collect();
+    sorted_vertices.sort_unstable_by_key(|&u| degrees[u]);
+
     for step in 0..max_steps {
         let dyadic_scale = 0.5f64.powi(step as i32);
         let eps_t = (params.initial_epsilon * dyadic_scale).clamp(0.02, 0.49);
         let min_parts = (1usize << (step + 1)).min(n);
 
-        let mut sorted_vertices: Vec<usize> = (0..n).collect();
-        sorted_vertices.sort_unstable_by_key(|&u| degrees[u]);
-        let mut parts: Vec<Vec<usize>> = (0..min_parts).map(|_| Vec::new()).collect();
-        for (idx, v) in sorted_vertices.into_iter().enumerate() {
+        let cap = n.div_ceil(min_parts);
+        let mut parts: Vec<Vec<usize>> = (0..min_parts).map(|_| Vec::with_capacity(cap)).collect();
+        for (idx, &v) in sorted_vertices.iter().enumerate() {
             parts[idx % min_parts].push(v);
         }
 

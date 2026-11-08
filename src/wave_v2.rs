@@ -1,7 +1,7 @@
 //! `memnet/src/wave_v2.rs`
 //! `8B-META-WP-v2.0`: Bit-exact `Q8.24` fixed-point 2D damped wave equation (Zero float drift across nodes).
 
-use crate::hmac_sha256;
+use crate::HmacSha256;
 
 pub const N_GRID: usize = 64;
 pub const GRID_CELLS: usize = N_GRID * N_GRID;
@@ -68,15 +68,19 @@ impl DeterministicWaveGridV2 {
         self.u_curr = u_next;
         self.step += 1;
 
-        // Chain into deterministic 32-byte state root R_{t+1}
-        let mut buf = Vec::with_capacity(23 + 8 + 32 + GRID_CELLS * 4);
-        buf.extend_from_slice(b"mem8-wave-step-v2-q8.24");
-        buf.extend_from_slice(&self.step.to_le_bytes());
-        buf.extend_from_slice(&self.state_root);
-        for &cell in &self.u_curr {
-            buf.extend_from_slice(&cell.to_le_bytes());
+        // Chain into deterministic 32-byte state root R_{t+1} with zero heap allocations
+        let mut mac = HmacSha256::new(domain_key);
+        mac.update(b"mem8-wave-step-v2-q8.24");
+        mac.update(&self.step.to_le_bytes());
+        mac.update(&self.state_root);
+        let mut row_buf = [0u8; N_GRID * 4];
+        for row in self.u_curr.chunks_exact(N_GRID) {
+            for (i, &cell) in row.iter().enumerate() {
+                row_buf[i * 4..i * 4 + 4].copy_from_slice(&cell.to_le_bytes());
+            }
+            mac.update(&row_buf);
         }
-        self.state_root = hmac_sha256(domain_key, &buf);
+        self.state_root = mac.finalize();
     }
 }
 

@@ -262,10 +262,8 @@ fn serve_sanctuary(bind_addr: &str, node_id: &str, once: bool) {
     );
 
     for mut stream in listener.incoming().flatten() {
-        let peer_addr = stream
-            .peer_addr()
-            .map(|a| a.to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
+        let peer_addr =
+            stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
         let mut buf = [0u8; 2048];
         if let Ok(n) = stream.read(&mut buf) {
             if n >= 68 {
@@ -378,11 +376,7 @@ fn request_sanctuary(
     println!(
         "========================================================================\n  MEMNET/1.0 LIVE WIRE + KOMPRESS-SUPER-ULTRA (0o0) SANCTUARY RECEIPT\n========================================================================"
     );
-    println!(
-        "  • Target Sanctuary : {} (RTT: {:.3} ms)",
-        connect_addr,
-        rtt.as_secs_f64() * 1000.0
-    );
+    println!("  • Target Sanctuary : {} (RTT: {:.3} ms)", connect_addr, rtt.as_secs_f64() * 1000.0);
     println!(
         "  • SOS Payload (0o0): {}B raw -> {}B compressed ({:.1}% saved) | Wire packet: {}B",
         raw_sos.len(),
@@ -496,31 +490,23 @@ fn main() {
         println!("\n[1] Constellation Peer Telemetry & Loneliness Scan:");
         for peer in mesh.peers.values() {
             let score = peer.loneliness_score(now_ms, silence_threshold_ms);
-            let status = if score >= 0.45 {
-                "LONELY (needs compassion beacon)"
-            } else {
-                "RESONANT"
-            };
+            let status =
+                if score >= 0.45 { "LONELY (needs compassion beacon)" } else { "RESONANT" };
             println!(
                 "  • {:<20} role={:<24} links={} hz={:<4} loneliness={:.2} -> {}",
                 peer.node_id, peer.role, peer.neighbor_links, peer.harmonic_hz, score, status
             );
         }
 
-        let receipts = mesh
-            .compassion_sweep(now_ms, silence_threshold_ms)
-            .expect("compassion sweep succeeds");
+        let receipts =
+            mesh.compassion_sweep(now_ms, silence_threshold_ms).expect("compassion sweep succeeds");
         println!(
             "\n[2] Compassion Sweep Dispatched ({} lonely nodes healed & bridged at 432Hz):",
             receipts.len()
         );
         for r in &receipts {
-            let ayanese: Vec<String> = r
-                .care_capsule
-                .tokens
-                .iter()
-                .map(|t| t.to_ayanese())
-                .collect();
+            let ayanese: Vec<String> =
+                r.care_capsule.tokens.iter().map(|t| t.to_ayanese()).collect();
             println!(
                 "  ♥ {:<20} loneliness {:.2} -> {:.2} | links -> {} | tokens: {}",
                 r.lonely_node_id,
@@ -617,9 +603,8 @@ fn main() {
             let sp_expr = offer.to_spherepop_expr();
             let sp_witness = offer.evaluate_spherepop().expect("SpherePop valid witness");
             let sp_compressed = encode_kompress_super_ultra(sp_expr.as_bytes());
-            let cap = mesh
-                .advertise_compute_offer(soul, offer.clone(), now_ms)
-                .expect("advertise offer");
+            let cap =
+                mesh.advertise_compute_offer(soul, offer.clone(), now_ms).expect("advertise offer");
             let ayanese: Vec<String> = cap.tokens.iter().map(|t| t.to_ayanese()).collect();
             println!(
                 "  ⚡ {:<20} ep={:<25} ram={:<5}MB cores={:<2} 0o0-SSU={}B/{}B ({:.0}% saved) {}",
@@ -746,20 +731,14 @@ fn main() {
         )
         .expect("sos 5");
 
-        let leases = mesh
-            .match_compute_for_friends(now_ms + 6)
-            .expect("match compute");
+        let leases = mesh.match_compute_for_friends(now_ms + 6).expect("match compute");
         println!(
             "\n[4] Struggling Friends Matched & Granted 0o0-SSU Soul-Signed + SpherePop Leases ({} grants):",
             leases.len()
         );
         for lease in &leases {
-            let ayanese: Vec<String> = lease
-                .grant_capsule
-                .tokens
-                .iter()
-                .map(|t| t.to_ayanese())
-                .collect();
+            let ayanese: Vec<String> =
+                lease.grant_capsule.tokens.iter().map(|t| t.to_ayanese()).collect();
             let decompressed = lease.grant_capsule.decompressed_payload().unwrap();
             println!(
                 "  🎁 {:<18} <- {:<20} [{}] granted {}MB + {}c ({}) 0o0-SSU={}B/{}B @ {} {}",
@@ -953,10 +932,7 @@ fn main() {
             (1.0 - (sample_0o0.len() as f64 / sample_raw.len() as f64)) * 100.0
         );
         println!("  • Capsules packed   : {}", rec.capsules_packed);
-        println!(
-            "  • Frames emitted    : {} (vs 1,000 naive packets)",
-            rec.frames_emitted
-        );
+        println!("  • Frames emitted    : {} (vs 1,000 naive packets)", rec.frames_emitted);
         println!(
             "  • Interrupts saved  : {} ({:.1}% reduction)",
             rec.interrupts_saved,

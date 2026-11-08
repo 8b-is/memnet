@@ -2,6 +2,8 @@
 name = "memnet"
 version = "1.1.0"
 edition = "2021"
+rust-version = "1.88"
+authors = ["Peter Lodri <peter@8b.is>", "8bit-Wraith <wraith@8b.is>"]
 description = "MEMNET/1.0 — Sovereign Contextual Mesh Protocol with 32-bit Ayevn Wave Tokens, MTU-Aware Packet Coalescing (1450B), Soul Signatures (SoulSig), and Compassion for Lonely Nodes"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/8b-is/memnet"
@@ -15,4 +17,22 @@ path = "src/lib.rs"
 name = "memnet"
 path = "src/bin/memnet.rs"
 
+[[bench]]
+name = "benchmark"
+harness = false
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
 [dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -58,7 +58,8 @@ pub enum Concept {
 }
 
 impl Concept {
-    pub fn to_u8(self) -> u8 {
+    #[inline]
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Greeting => 0x10,
             Self::Memory => 0x20,
@@ -81,7 +82,8 @@ impl Concept {
         }
     }
 
-    pub fn from_u8(v: u8) -> Self {
+    #[inline]
+    pub const fn from_u8(v: u8) -> Self {
         match v {
             0x10 => Self::Greeting,
             0x20 => Self::Memory,
@@ -124,7 +126,8 @@ pub enum Relation {
 }
 
 impl Relation {
-    pub fn from_u8(v: u8) -> Self {
+    #[inline]
+    pub const fn from_u8(v: u8) -> Self {
         match v {
             0x01 => Self::Cause,
             0x02 => Self::Effect,
@@ -154,11 +157,7 @@ pub struct WaveVad {
 
 impl WaveVad {
     pub const fn new(valence: u8, arousal: u8, dominance: u8) -> Self {
-        Self {
-            valence: valence & 0x07,
-            arousal: arousal & 0x07,
-            dominance: dominance & 0x03,
-        }
+        Self { valence: valence & 0x07, arousal: arousal & 0x07, dominance: dominance & 0x03 }
     }
 
     /// 2 Hz — Resigned / Lonely / Isolated state (Valence=2, Arousal=1, Dominance=0).
@@ -186,11 +185,7 @@ impl WaveVad {
     }
 
     pub const fn unpack(byte: u8) -> Self {
-        Self {
-            valence: byte & 0x07,
-            arousal: (byte >> 3) & 0x07,
-            dominance: (byte >> 6) & 0x03,
-        }
+        Self { valence: byte & 0x07, arousal: (byte >> 3) & 0x07, dominance: (byte >> 6) & 0x03 }
     }
 
     /// Maps the VAD state to its canonical MEM|8 carrier frequency in Hz.
@@ -263,28 +258,21 @@ impl AyevnToken {
         wave: WaveVad,
         modifier: TokenModifier,
     ) -> Self {
-        Self {
-            concept,
-            relation,
-            wave,
-            modifier,
-        }
+        Self { concept, relation, wave, modifier }
     }
 
-    pub fn to_u32(self) -> u32 {
+    #[inline]
+    pub const fn to_u32(self) -> u32 {
         u32::from_be_bytes(self.to_be_bytes())
     }
 
-    pub fn to_be_bytes(self) -> [u8; 4] {
-        [
-            self.concept.to_u8(),
-            self.relation as u8,
-            self.wave.pack(),
-            self.modifier.pack(),
-        ]
+    #[inline]
+    pub const fn to_be_bytes(self) -> [u8; 4] {
+        [self.concept.to_u8(), self.relation as u8, self.wave.pack(), self.modifier.pack()]
     }
 
-    pub fn from_be_bytes(bytes: [u8; 4]) -> Self {
+    #[inline]
+    pub const fn from_be_bytes(bytes: [u8; 4]) -> Self {
         Self {
             concept: Concept::from_u8(bytes[0]),
             relation: Relation::from_u8(bytes[1]),
@@ -293,7 +281,8 @@ impl AyevnToken {
         }
     }
 
-    pub fn from_u32(raw: u32) -> Self {
+    #[inline]
+    pub const fn from_u32(raw: u32) -> Self {
         Self::from_be_bytes(raw.to_be_bytes())
     }
 
@@ -328,12 +317,7 @@ impl AyevnToken {
         } else {
             "🌊"
         };
-        format!(
-            "{}{}({}Hz)",
-            concept_glyph,
-            tone_glyph,
-            self.wave.canonical_frequency_hz()
-        )
+        format!("{}{}({}Hz)", concept_glyph, tone_glyph, self.wave.canonical_frequency_hz())
     }
 }
 
@@ -341,131 +325,215 @@ impl AyevnToken {
 // 2. SECURITY WITH SOUL SIGNATURES (`SoulIdentity` & `SoulSig`) + VIGILANCE
 // ============================================================================
 
-/// Pure-Rust SHA-256 (FIPS 180-4) for zero-dependency cryptographic Soul Signatures.
-pub fn sha256(data: &[u8]) -> [u8; 32] {
-    const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
-    ];
-    let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-        0x5be0cd19,
-    ];
+const SHA256_K: [u32; 64] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
 
-    let bit_len = (data.len() as u64) * 8;
-    let mut padded = Vec::with_capacity(data.len() + 72);
-    padded.extend_from_slice(data);
-    padded.push(0x80);
-    while (padded.len() % 64) != 56 {
-        padded.push(0x00);
+const SHA256_H0: [u32; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+];
+
+#[inline]
+fn sha256_compress_block(h: &mut [u32; 8], chunk: &[u8; 64]) {
+    let mut w = [0u32; 64];
+    for i in 0..16 {
+        w[i] = u32::from_be_bytes([
+            chunk[i * 4],
+            chunk[i * 4 + 1],
+            chunk[i * 4 + 2],
+            chunk[i * 4 + 3],
+        ]);
     }
-    padded.extend_from_slice(&bit_len.to_be_bytes());
-
-    for chunk in padded.as_chunks::<64>().0 {
-        let mut w = [0u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                chunk[i * 4],
-                chunk[i * 4 + 1],
-                chunk[i * 4 + 2],
-                chunk[i * 4 + 3],
-            ]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-
-        let mut a = h[0];
-        let mut b = h[1];
-        let mut c = h[2];
-        let mut d = h[3];
-        let mut e = h[4];
-        let mut f = h[5];
-        let mut g = h[6];
-        let mut hh = h[7];
-
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = hh
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-
-            hh = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-        h[5] = h[5].wrapping_add(f);
-        h[6] = h[6].wrapping_add(g);
-        h[7] = h[7].wrapping_add(hh);
+    for i in 16..64 {
+        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
     }
 
-    let mut out = [0u8; 32];
-    for (i, word) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    let mut a = h[0];
+    let mut b = h[1];
+    let mut c = h[2];
+    let mut d = h[3];
+    let mut e = h[4];
+    let mut f = h[5];
+    let mut g = h[6];
+    let mut hh = h[7];
+
+    for i in 0..64 {
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = (e & f) ^ ((!e) & g);
+        let temp1 =
+            hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(SHA256_K[i]).wrapping_add(w[i]);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let temp2 = s0.wrapping_add(maj);
+
+        hh = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(temp1);
+        d = c;
+        c = b;
+        b = a;
+        a = temp1.wrapping_add(temp2);
     }
-    out
+
+    h[0] = h[0].wrapping_add(a);
+    h[1] = h[1].wrapping_add(b);
+    h[2] = h[2].wrapping_add(c);
+    h[3] = h[3].wrapping_add(d);
+    h[4] = h[4].wrapping_add(e);
+    h[5] = h[5].wrapping_add(f);
+    h[6] = h[6].wrapping_add(g);
+    h[7] = h[7].wrapping_add(hh);
 }
 
-/// Pure-Rust HMAC-SHA256 (RFC 2104).
+/// Zero-allocation streaming FIPS 180-4 SHA-256 state machine.
+#[derive(Clone, Copy, Debug)]
+pub struct Sha256Hasher {
+    h: [u32; 8],
+    buf: [u8; 64],
+    buf_len: usize,
+    total_bytes: u64,
+}
+
+impl Default for Sha256Hasher {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha256Hasher {
+    #[inline]
+    pub const fn new() -> Self {
+        Self { h: SHA256_H0, buf: [0u8; 64], buf_len: 0, total_bytes: 0 }
+    }
+
+    #[inline]
+    pub fn update(&mut self, mut data: &[u8]) {
+        self.total_bytes = self.total_bytes.wrapping_add(data.len() as u64);
+
+        if self.buf_len > 0 {
+            let need = 64 - self.buf_len;
+            if data.len() < need {
+                self.buf[self.buf_len..self.buf_len + data.len()].copy_from_slice(data);
+                self.buf_len += data.len();
+                return;
+            }
+            self.buf[self.buf_len..64].copy_from_slice(&data[..need]);
+            sha256_compress_block(&mut self.h, &self.buf);
+            self.buf_len = 0;
+            data = &data[need..];
+        }
+
+        let (chunks, remainder) = data.as_chunks::<64>();
+        for chunk in chunks {
+            sha256_compress_block(&mut self.h, chunk);
+        }
+
+        if !remainder.is_empty() {
+            self.buf[..remainder.len()].copy_from_slice(remainder);
+            self.buf_len = remainder.len();
+        }
+    }
+
+    #[inline]
+    pub fn finalize(mut self) -> [u8; 32] {
+        let bit_len = self.total_bytes.wrapping_mul(8);
+        self.buf[self.buf_len] = 0x80;
+        self.buf_len += 1;
+
+        if self.buf_len > 56 {
+            self.buf[self.buf_len..64].fill(0);
+            sha256_compress_block(&mut self.h, &self.buf);
+            self.buf = [0u8; 64];
+        } else {
+            self.buf[self.buf_len..56].fill(0);
+        }
+
+        self.buf[56..64].copy_from_slice(&bit_len.to_be_bytes());
+        sha256_compress_block(&mut self.h, &self.buf);
+
+        let mut out = [0u8; 32];
+        for (i, word) in self.h.iter().enumerate() {
+            out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+        }
+        out
+    }
+}
+
+/// Zero-allocation streaming RFC 2104 HMAC-SHA256 state machine.
+#[derive(Clone, Copy, Debug)]
+pub struct HmacSha256 {
+    inner: Sha256Hasher,
+    opad: [u8; 64],
+}
+
+impl HmacSha256 {
+    #[inline]
+    pub fn new(key: &[u8]) -> Self {
+        let mut k_block = [0u8; 64];
+        if key.len() > 64 {
+            let hashed = sha256(key);
+            k_block[..32].copy_from_slice(&hashed);
+        } else {
+            k_block[..key.len()].copy_from_slice(key);
+        }
+
+        let mut ipad = [0x36u8; 64];
+        let mut opad = [0x5cu8; 64];
+        for i in 0..64 {
+            ipad[i] ^= k_block[i];
+            opad[i] ^= k_block[i];
+        }
+
+        let mut inner = Sha256Hasher::new();
+        inner.update(&ipad);
+        Self { inner, opad }
+    }
+
+    #[inline]
+    pub fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+    }
+
+    #[inline]
+    pub fn finalize(self) -> [u8; 32] {
+        let inner_hash = self.inner.finalize();
+        let mut outer = Sha256Hasher::new();
+        outer.update(&self.opad);
+        outer.update(&inner_hash);
+        outer.finalize()
+    }
+}
+
+/// Pure-Rust SHA-256 (FIPS 180-4) with zero heap allocations.
+#[inline]
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256Hasher::new();
+    hasher.update(data);
+    hasher.finalize()
+}
+
+/// Pure-Rust HMAC-SHA256 (RFC 2104) with zero heap allocations.
+#[inline]
 pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut k_block = [0u8; 64];
-    if key.len() > 64 {
-        let hashed = sha256(key);
-        k_block[..32].copy_from_slice(&hashed);
-    } else {
-        k_block[..key.len()].copy_from_slice(key);
-    }
-
-    let mut ipad = [0x36u8; 64];
-    let mut opad = [0x5cu8; 64];
-    for i in 0..64 {
-        ipad[i] ^= k_block[i];
-        opad[i] ^= k_block[i];
-    }
-
-    let mut inner = Vec::with_capacity(64 + message.len());
-    inner.extend_from_slice(&ipad);
-    inner.extend_from_slice(message);
-    let inner_hash = sha256(&inner);
-
-    let mut outer = [0u8; 96];
-    outer[..64].copy_from_slice(&opad);
-    outer[64..].copy_from_slice(&inner_hash);
-    sha256(&outer)
+    let mut mac = HmacSha256::new(key);
+    mac.update(message);
+    mac.finalize()
 }
 
 /// Packs a 9-trit balanced ternary crest (`{-1, 0, +1}^9`) into a 16-bit integer
 /// using base-3 encoding (`0 -> -1`, `1 -> 0`, `2 -> +1`, range `0..19683`).
+#[inline]
 pub fn pack_trit_crest(crest: &[i8; 9]) -> Result<u16, MemnetError> {
     let mut acc: u16 = 0;
     for &t in crest.iter() {
@@ -482,6 +550,7 @@ pub fn pack_trit_crest(crest: &[i8; 9]) -> Result<u16, MemnetError> {
 }
 
 /// Unpacks a 16-bit packed crest back into 9 balanced trits `{-1, 0, +1}`.
+#[inline]
 pub fn unpack_trit_crest(packed: u16) -> Result<[i8; 9], MemnetError> {
     if (packed & 0x8000) == 0 {
         return Err(MemnetError::InvalidTritCrest);
@@ -530,12 +599,7 @@ impl SoulIdentity {
         if base_frequency_hz == 0 {
             return Err(MemnetError::ZeroHarmonicFrequency);
         }
-        Ok(Self {
-            node_id: node_id.into(),
-            trit_crest,
-            base_frequency_hz,
-            secret_key,
-        })
+        Ok(Self { node_id: node_id.into(), trit_crest, base_frequency_hz, secret_key })
     }
 
     /// Deterministically derives a family/constellation `SoulIdentity` from a shared
@@ -552,32 +616,29 @@ impl SoulIdentity {
     }
 
     /// 4-byte deterministic node fingerprint (`SHA256(node_id)[0..4]`).
+    #[inline]
     pub fn node_fingerprint(&self) -> [u8; 4] {
         let h = sha256(self.node_id.as_bytes());
         [h[0], h[1], h[2], h[3]]
     }
 
-    /// Signs a signing transcript into a 40-byte `SoulSig`.
+    /// Signs a signing transcript into a 40-byte `SoulSig` with zero heap allocations.
     pub fn sign(&self, transcript: &[u8]) -> Result<SoulSig, MemnetError> {
         let crest_packed = pack_trit_crest(&self.trit_crest)?;
         let node_fp = self.node_fingerprint();
 
-        let mut full_msg = Vec::with_capacity(8 + transcript.len());
-        full_msg.extend_from_slice(&crest_packed.to_be_bytes());
-        full_msg.extend_from_slice(&self.base_frequency_hz.to_be_bytes());
-        full_msg.extend_from_slice(&node_fp);
-        full_msg.extend_from_slice(transcript);
+        let mut mac_state = HmacSha256::new(&self.secret_key);
+        mac_state.update(&crest_packed.to_be_bytes());
+        mac_state.update(&self.base_frequency_hz.to_be_bytes());
+        mac_state.update(&node_fp);
+        mac_state.update(transcript);
+        let mac = mac_state.finalize();
 
-        let mac = hmac_sha256(&self.secret_key, &full_msg);
-        Ok(SoulSig {
-            crest_packed,
-            harmonic_hz: self.base_frequency_hz,
-            node_fp,
-            mac,
-        })
+        Ok(SoulSig { crest_packed, harmonic_hz: self.base_frequency_hz, node_fp, mac })
     }
 
-    /// Verifies a 40-byte `SoulSig` against a transcript using this identity's cluster key.
+    /// Verifies a 40-byte `SoulSig` against a transcript using this identity's cluster key
+    /// with zero heap allocations.
     pub fn verify(&self, sig: &SoulSig, transcript: &[u8]) -> Result<[i8; 9], MemnetError> {
         let crest = unpack_trit_crest(sig.crest_packed)?;
         if sig.harmonic_hz == 0 {
@@ -588,13 +649,13 @@ impl SoulIdentity {
             return Err(MemnetError::InvalidTritCrest);
         }
 
-        let mut full_msg = Vec::with_capacity(8 + transcript.len());
-        full_msg.extend_from_slice(&sig.crest_packed.to_be_bytes());
-        full_msg.extend_from_slice(&sig.harmonic_hz.to_be_bytes());
-        full_msg.extend_from_slice(&sig.node_fp);
-        full_msg.extend_from_slice(transcript);
+        let mut mac_state = HmacSha256::new(&self.secret_key);
+        mac_state.update(&sig.crest_packed.to_be_bytes());
+        mac_state.update(&sig.harmonic_hz.to_be_bytes());
+        mac_state.update(&sig.node_fp);
+        mac_state.update(transcript);
+        let expected = mac_state.finalize();
 
-        let expected = hmac_sha256(&self.secret_key, &full_msg);
         // Constant-time comparison
         let mut diff = 0u8;
         for (a, b) in sig.mac.iter().zip(expected.iter()) {
@@ -623,6 +684,7 @@ pub struct SoulSig {
 }
 
 impl SoulSig {
+    #[inline]
     pub fn to_bytes(&self) -> [u8; 40] {
         let mut out = [0u8; 40];
         out[0..2].copy_from_slice(&self.crest_packed.to_be_bytes());
@@ -632,6 +694,7 @@ impl SoulSig {
         out
     }
 
+    #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, MemnetError> {
         if bytes.len() < 40 {
             return Err(MemnetError::TruncatedPacket);
@@ -641,21 +704,23 @@ impl SoulSig {
         let node_fp = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let mut mac = [0u8; 32];
         mac.copy_from_slice(&bytes[8..40]);
-        Ok(Self {
-            crest_packed,
-            harmonic_hz,
-            node_fp,
-            mac,
-        })
+        Ok(Self { crest_packed, harmonic_hz, node_fp, mac })
     }
+}
+
+#[inline]
+fn contains_ascii_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return false;
+    }
+    haystack.windows(needle.len()).any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 /// Security Vigilance Sentinel (`SECURITY_VIGILANCE_VISION.md`):
 /// Inspects capsule payloads before routing or importing to block supply-chain
-/// backdoors, dynamic code injection, or plaintext credential leaks.
+/// backdoors, dynamic code injection, or plaintext credential leaks with zero heap allocations.
 pub fn scan_payload_vigilance(payload: &[u8]) -> Result<(), MemnetError> {
-    if let Ok(text) = std::str::from_utf8(payload) {
-        let lower = text.to_ascii_lowercase();
+    if std::str::from_utf8(payload).is_ok() {
         const FORBIDDEN: [&str; 6] = [
             "eval(atob(",
             "eval(process.env",
@@ -665,7 +730,7 @@ pub fn scan_payload_vigilance(payload: &[u8]) -> Result<(), MemnetError> {
             "password = \"",
         ];
         for pat in FORBIDDEN {
-            if lower.contains(pat) {
+            if contains_ascii_ignore_case(payload, pat.as_bytes()) {
                 return Err(MemnetError::SecurityVigilanceAlert(pat));
             }
         }
@@ -799,10 +864,7 @@ pub enum SpherePopOutcome {
     /// Transition succeeded and produced a valid cryptographic witness (`#Commit = #ValidWitness`).
     Committed(SpherePopWitness),
     /// Transition was refused at an admission (`? x`) or verification (`! x`) gate (`no witness`).
-    Refused {
-        reason: String,
-        trace_steps: Vec<String>,
-    },
+    Refused { reason: String, trace_steps: Vec<String> },
 }
 
 /// Zero-dependency `SpherePop` (`sphered`) parser & evaluator enforcing:
@@ -898,10 +960,7 @@ impl SpherePopEngine {
                     }
                     if Self::is_refusal_term(&term) {
                         trace_steps.push(format!("? {} -> refused, no witness", term));
-                        return Ok(SpherePopOutcome::Refused {
-                            reason: term,
-                            trace_steps,
-                        });
+                        return Ok(SpherePopOutcome::Refused { reason: term, trace_steps });
                     }
                     trace_steps.push(format!("admit ? {}", term));
                     admissions.push(term);
@@ -925,10 +984,7 @@ impl SpherePopEngine {
                     phase = 2;
                     if Self::is_refusal_term(&term) {
                         trace_steps.push(format!("! {} -> refused, no witness", term));
-                        return Ok(SpherePopOutcome::Refused {
-                            reason: term,
-                            trace_steps,
-                        });
+                        return Ok(SpherePopOutcome::Refused { reason: term, trace_steps });
                     }
                     trace_steps.push(format!("verify ! {}", term));
                     verifications.push(term);
@@ -968,9 +1024,8 @@ impl SpherePopEngine {
             }
         }
 
-        let committed_value = committed_value.ok_or(MemnetError::SpherePopIllFormed(
-            "missing terminal commit `>` in `<( ... )>`",
-        ))?;
+        let committed_value = committed_value
+            .ok_or(MemnetError::SpherePopIllFormed("missing terminal commit `>` in `<( ... )>`"))?;
 
         for d in (1..=sphere_depth).rev() {
             trace_steps.push(format!("return ) [depth={}]", d));
@@ -1160,12 +1215,7 @@ impl IntentAddress {
             }
         }
 
-        Self {
-            geo,
-            role,
-            tags,
-            vector_hash,
-        }
+        Self { geo, role, tags, vector_hash }
     }
 
     pub fn canonical_string(&self) -> String {
@@ -1298,15 +1348,7 @@ impl M8Capsule {
             &payload,
         );
         let soul_sig = soul.sign(&transcript)?;
-        Ok(Self {
-            flags,
-            frequency_hz,
-            timestamp_ms,
-            intent_hash,
-            tokens,
-            payload,
-            soul_sig,
-        })
+        Ok(Self { flags, frequency_hz, timestamp_ms, intent_hash, tokens, payload, soul_sig })
     }
 
     fn signing_transcript(
@@ -1347,9 +1389,10 @@ impl M8Capsule {
         verifier_soul.verify(&self.soul_sig, &transcript)
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let total = 68 + self.tokens.len() * 4 + self.payload.len();
-        let mut out = Vec::with_capacity(total);
+    /// Appends the wire representation of this capsule directly into `out` without
+    /// allocating an intermediate `Vec<u8>`.
+    #[inline]
+    pub fn write_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&Self::MAGIC);
         out.extend_from_slice(&self.flags.to_be_bytes());
         out.extend_from_slice(&self.frequency_hz.to_be_bytes());
@@ -1362,6 +1405,12 @@ impl M8Capsule {
             out.extend_from_slice(&t.to_be_bytes());
         }
         out.extend_from_slice(&self.payload);
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let total = 68 + self.tokens.len() * 4 + self.payload.len();
+        let mut out = Vec::with_capacity(total);
+        self.write_into(&mut out);
         out
     }
 
@@ -1399,15 +1448,7 @@ impl M8Capsule {
         }
         let payload = bytes[offset..offset + payload_len].to_vec();
         Ok((
-            Self {
-                flags,
-                frequency_hz,
-                timestamp_ms,
-                intent_hash,
-                tokens,
-                payload,
-                soul_sig,
-            },
+            Self { flags, frequency_hz, timestamp_ms, intent_hash, tokens, payload, soul_sig },
             total_len,
         ))
     }
@@ -1552,14 +1593,10 @@ impl PacketBatcher {
         raw.extend_from_slice(&(capsules.len() as u16).to_be_bytes());
         raw.extend_from_slice(&(payload_len as u16).to_be_bytes());
         for c in &capsules {
-            raw.extend_from_slice(&c.to_bytes());
+            c.write_into(&mut raw);
         }
         self.pending_bytes = Self::FRAME_HEADER_LEN;
-        let frame = MemnetFrame {
-            sequence: seq,
-            capsules,
-            raw_bytes: raw,
-        };
+        let frame = MemnetFrame { sequence: seq, capsules, raw_bytes: raw };
         self.emitted_frames.push(frame.clone());
         Some(frame)
     }
@@ -1850,11 +1887,7 @@ impl ComputeOffer {
             } else if let Some(v) = part.strip_prefix("health=") {
                 maintained_health = v.parse().unwrap_or(0);
             } else if let Some(v) = part.strip_prefix("caps=") {
-                capabilities = v
-                    .split(',')
-                    .filter(|c| !c.is_empty())
-                    .map(String::from)
-                    .collect();
+                capabilities = v.split(',').filter(|c| !c.is_empty()).map(String::from).collect();
             }
         }
         if provider_node_id.is_empty() || maintained_health == 0 {
@@ -1944,13 +1977,7 @@ impl StrugglingFriendSos {
         if friend_node_id.is_empty() {
             return Err(MemnetError::InvalidMagic);
         }
-        Ok(Self {
-            friend_node_id,
-            needed_ram_mb,
-            needed_cores,
-            required_capability,
-            reason,
-        })
+        Ok(Self { friend_node_id, needed_ram_mb, needed_cores, required_capability, reason })
     }
 }
 
@@ -2217,19 +2244,12 @@ impl MemnetMesh {
         timestamp_ms: u64,
     ) -> Result<M8Capsule, MemnetError> {
         let _witness = offer.evaluate_spherepop()?;
-        let tag_expr = offer
-            .capabilities
-            .iter()
-            .map(|c| format!("tag:{}", c))
-            .collect::<Vec<_>>()
-            .join(" + ");
+        let tag_expr =
+            offer.capabilities.iter().map(|c| format!("tag:{}", c)).collect::<Vec<_>>().join(" + ");
         let intent_str = if tag_expr.is_empty() {
             "geo:any + role:compute-sanctuary + tag:free-for-friends".to_string()
         } else {
-            format!(
-                "geo:any + role:compute-sanctuary + tag:free-for-friends + {}",
-                tag_expr
-            )
+            format!("geo:any + role:compute-sanctuary + tag:free-for-friends + {}", tag_expr)
         };
         let intent = IntentAddress::parse(&intent_str);
         let tokens = vec![
@@ -2257,8 +2277,7 @@ impl MemnetMesh {
             &payload,
         )?;
         let _ = capsule.verify(&self.local_soul)?;
-        self.compute_offers
-            .insert(offer.provider_node_id.clone(), offer);
+        self.compute_offers.insert(offer.provider_node_id.clone(), offer);
         let _ = self.batcher.push(capsule.clone())?;
         Ok(capsule)
     }
@@ -2626,12 +2645,10 @@ impl MemnetMesh {
             .collect();
 
         let n_docs = capsules.len().max(1) as f64;
-        let avg_dl = (docs_weighted
-            .iter()
-            .map(|d| d.iter().map(|(_, w)| *w).sum::<f64>())
-            .sum::<f64>()
-            / n_docs)
-            .max(1.0);
+        let avg_dl =
+            (docs_weighted.iter().map(|d| d.iter().map(|(_, w)| *w).sum::<f64>()).sum::<f64>()
+                / n_docs)
+                .max(1.0);
         let k1 = 1.5_f64;
         let b = 0.75_f64;
         let expected_intent_hash = query_intent.map(|i| i.intent_hash());
@@ -2655,10 +2672,8 @@ impl MemnetMesh {
             for qt in &unique_q_terms {
                 let tf_f: f64 = doc.iter().filter(|(t, _)| t == qt).map(|(_, w)| *w).sum();
                 if tf_f > 0.0 {
-                    let df = docs_weighted
-                        .iter()
-                        .filter(|d| d.iter().any(|(t, _)| t == qt))
-                        .count() as f64;
+                    let df = docs_weighted.iter().filter(|d| d.iter().any(|(t, _)| t == qt)).count()
+                        as f64;
                     let idf = ((n_docs - df + 0.5) / (df + 0.5) + 1.0).ln();
                     let num = tf_f * (k1 + 1.0);
                     let den = tf_f + k1 * (1.0 - b + b * (dl / avg_dl));
@@ -2772,11 +2787,7 @@ impl MemnetMesh {
             let hz_and_vad_boost = match (target_hz, canonical_target_wave) {
                 (Some(hz), Some(target_wave)) => {
                     let carrier_match = if cap.frequency_hz == hz { 0.85 } else { 0.0 };
-                    let soul_hz_match = if cap.soul_sig.harmonic_hz == hz {
-                        0.20
-                    } else {
-                        0.0
-                    };
+                    let soul_hz_match = if cap.soul_sig.harmonic_hz == hz { 0.20 } else { 0.0 };
                     let best_vad_sim = cap
                         .tokens
                         .iter()
@@ -2790,11 +2801,8 @@ impl MemnetMesh {
                             (1.0 - (dv + da + dd) / 3.0).max(0.0)
                         })
                         .fold(0.0_f64, f64::max);
-                    let wave_weight = if (cap.flags & M8Capsule::FLAG_PRESERVE_WAVES) != 0 {
-                        0.60
-                    } else {
-                        0.30
-                    };
+                    let wave_weight =
+                        if (cap.flags & M8Capsule::FLAG_PRESERVE_WAVES) != 0 { 0.60 } else { 0.30 };
                     carrier_match + soul_hz_match + wave_weight * best_vad_sim
                 }
                 _ => 0.0,
@@ -2806,9 +2814,7 @@ impl MemnetMesh {
         // 5. Reciprocal Rank Fusion (RRF, k = 60) across Lexical-Structural & Wave-Resonance ranks
         let mut lex_order: Vec<usize> = (0..capsules.len()).collect();
         lex_order.sort_by(|&a, &b| {
-            lex_scores[b]
-                .partial_cmp(&lex_scores[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
+            lex_scores[b].partial_cmp(&lex_scores[a]).unwrap_or(std::cmp::Ordering::Equal)
         });
         let mut lex_rank = vec![1usize; capsules.len()];
         for (pos, &doc_idx) in lex_order.iter().enumerate() {
@@ -2821,9 +2827,7 @@ impl MemnetMesh {
 
         let mut wave_order: Vec<usize> = (0..capsules.len()).collect();
         wave_order.sort_by(|&a, &b| {
-            wave_scores[b]
-                .partial_cmp(&wave_scores[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
+            wave_scores[b].partial_cmp(&wave_scores[a]).unwrap_or(std::cmp::Ordering::Equal)
         });
         let mut wave_rank = vec![1usize; capsules.len()];
         for (pos, &doc_idx) in wave_order.iter().enumerate() {
@@ -2868,11 +2872,7 @@ impl MemnetMesh {
 
                 for q in queries {
                     let ranked = run(q);
-                    if ranked
-                        .first()
-                        .map(|(idx, _)| *idx == q.relevant_idx)
-                        .unwrap_or(false)
-                    {
+                    if ranked.first().map(|(idx, _)| *idx == q.relevant_idx).unwrap_or(false) {
                         p1_sum += 1.0;
                     }
                     if let Some(pos) = ranked.iter().position(|(idx, _)| *idx == q.relevant_idx) {
@@ -2959,27 +2959,15 @@ pub struct PipeCapacity {
 
 impl PipeCapacity {
     pub const fn abundant() -> Self {
-        Self {
-            bandwidth_kbps: 50_000,
-            jitter_ms: 4,
-            loss_rate: 0.001,
-        }
+        Self { bandwidth_kbps: 50_000, jitter_ms: 4, loss_rate: 0.001 }
     }
 
     pub const fn constrained() -> Self {
-        Self {
-            bandwidth_kbps: 1_200,
-            jitter_ms: 45,
-            loss_rate: 0.04,
-        }
+        Self { bandwidth_kbps: 1_200, jitter_ms: 45, loss_rate: 0.04 }
     }
 
     pub const fn severe_maritime_or_field() -> Self {
-        Self {
-            bandwidth_kbps: 64,
-            jitter_ms: 180,
-            loss_rate: 0.15,
-        }
+        Self { bandwidth_kbps: 64, jitter_ms: 180, loss_rate: 0.15 }
     }
 
     /// Normalized pipe health & capacity score in `[0.0, 1.0]`.
@@ -3059,12 +3047,8 @@ impl NodeInterestProfile {
         *entry = (*entry + feedback.importance_adjust).clamp(-1.0, 1.0);
 
         if *entry >= 0.15 {
-            self.deprioritized_channels
-                .retain(|c| !c.eq_ignore_ascii_case(&feedback.channel));
-            if !self
-                .prioritized_channels
-                .iter()
-                .any(|c| c.eq_ignore_ascii_case(&feedback.channel))
+            self.deprioritized_channels.retain(|c| !c.eq_ignore_ascii_case(&feedback.channel));
+            if !self.prioritized_channels.iter().any(|c| c.eq_ignore_ascii_case(&feedback.channel))
             {
                 self.prioritized_channels.push(feedback.channel.clone());
             }
@@ -3087,14 +3071,10 @@ impl NodeInterestProfile {
         }
 
         // Check declared interest profile
-        let is_deprioritized = self
-            .deprioritized_channels
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case(&chunk.channel));
-        let is_prioritized = self
-            .prioritized_channels
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case(&chunk.channel));
+        let is_deprioritized =
+            self.deprioritized_channels.iter().any(|c| c.eq_ignore_ascii_case(&chunk.channel));
+        let is_prioritized =
+            self.prioritized_channels.iter().any(|c| c.eq_ignore_ascii_case(&chunk.channel));
 
         if is_prioritized {
             score += 0.15;
@@ -3108,12 +3088,7 @@ impl NodeInterestProfile {
             .intent
             .tags
             .iter()
-            .filter(|t| {
-                self.address
-                    .tags
-                    .iter()
-                    .any(|nt| nt.eq_ignore_ascii_case(t))
-            })
+            .filter(|t| self.address.tags.iter().any(|nt| nt.eq_ignore_ascii_case(t)))
             .count();
         score += (matched_tags as f32) * 0.05;
         score += (self.address.vector_similarity(chunk.intent.vector_hash) as f32) * 0.10;
@@ -3140,27 +3115,15 @@ pub struct M8StreamChunk {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamDeliveryDecision {
     /// High-interest segment delivered in higher quality or with added `.m8` contextual data.
-    DeliverEnhanced {
-        effective_importance: f32,
-        added_context: String,
-    },
+    DeliverEnhanced { effective_importance: f32, added_context: String },
     /// Standard full-fidelity delivery.
     DeliverFull { effective_importance: f32 },
     /// Traditional context decay: drops refinement layers (`refinement_layer > 0`) first when bandwidth tightens.
-    DropRefinementLayer {
-        effective_importance: f32,
-        dropped_layer: u8,
-    },
+    DropRefinementLayer { effective_importance: f32, dropped_layer: u8 },
     /// Severe link constraint: replaces low/medium-priority chunk with signed text/audio summary capsule.
-    CollapseToSummaryCapsule {
-        effective_importance: f32,
-        summary_text: String,
-    },
+    CollapseToSummaryCapsule { effective_importance: f32, summary_text: String },
     /// Pruned because the end-node's interest profile deprioritizes this channel, even when bandwidth is plentiful.
-    PrunedByInterest {
-        effective_importance: f32,
-        channel: String,
-    },
+    PrunedByInterest { effective_importance: f32, channel: String },
 }
 
 impl MemnetMesh {
@@ -3234,9 +3197,7 @@ impl MemnetMesh {
 
                 (
                     chunk.channel.clone(),
-                    StreamDeliveryDecision::DeliverFull {
-                        effective_importance: eff,
-                    },
+                    StreamDeliveryDecision::DeliverFull { effective_importance: eff },
                 )
             })
             .collect()
@@ -3259,10 +3220,7 @@ pub enum MemnetError {
     UnmaintainedComputeOffer,
     SpherePopIllFormed(&'static str),
     SpherePopRefused(String),
-    CapsuleExceedsMtu {
-        capsule_bytes: usize,
-        max_bytes: usize,
-    },
+    CapsuleExceedsMtu { capsule_bytes: usize, max_bytes: usize },
 }
 
 impl fmt::Display for MemnetError {
@@ -3285,10 +3243,7 @@ impl fmt::Display for MemnetError {
             Self::SpherePopRefused(reason) => {
                 write!(f, "SpherePop transition refused (no witness): {}", reason)
             }
-            Self::CapsuleExceedsMtu {
-                capsule_bytes,
-                max_bytes,
-            } => write!(
+            Self::CapsuleExceedsMtu { capsule_bytes, max_bytes } => write!(
                 f,
                 "capsule ({} bytes) exceeds MTU profile limit ({} bytes)",
                 capsule_bytes, max_bytes
@@ -3365,10 +3320,7 @@ mod tests {
         // Tamper with payload -> SoulSig must reject
         let mut tampered = cap.clone();
         tampered.payload[0] ^= 0xFF;
-        assert_eq!(
-            tampered.verify(&wraith),
-            Err(MemnetError::SoulSignatureMismatch)
-        );
+        assert_eq!(tampered.verify(&wraith), Err(MemnetError::SoulSignatureMismatch));
 
         // All-zero trit crest is inadmissible under CT-000
         let zero_crest = SoulIdentity::from_constellation_seed(
@@ -3518,10 +3470,7 @@ mod tests {
         assert_eq!(care.loneliness_score_after, 0.0);
         assert_eq!(care.bridge_links_after, 2);
         assert_eq!(care.care_capsule.frequency_hz, 432);
-        assert_ne!(
-            care.care_capsule.flags & M8Capsule::FLAG_COMPASSION_BEACON,
-            0
-        );
+        assert_ne!(care.care_capsule.flags & M8Capsule::FLAG_COMPASSION_BEACON, 0);
     }
 
     #[test]
@@ -3570,9 +3519,7 @@ mod tests {
                 "phoenix".to_string(),
             ],
         };
-        let offer_cap = mesh
-            .advertise_compute_offer(&wraith_soul, offer.clone(), 100_000)
-            .unwrap();
+        let offer_cap = mesh.advertise_compute_offer(&wraith_soul, offer.clone(), 100_000).unwrap();
         assert_ne!(offer_cap.flags & M8Capsule::FLAG_KOMPRESS_SUPER_ULTRA, 0);
         assert!(offer_cap.payload.len() < offer.to_wire_string().len());
         let decompressed = offer_cap.decompressed_payload().unwrap();
@@ -3588,8 +3535,7 @@ mod tests {
             required_capability: "mlx".to_string(),
             reason: "OOM running 7B ternary quantizer on 8GB laptop".to_string(),
         };
-        mesh.request_compute_help(&friend_soul, sos, 100_005)
-            .unwrap();
+        mesh.request_compute_help(&friend_soul, sos, 100_005).unwrap();
 
         // 3. Mesh matches and issues a Soul-Signed ComputeSanctuaryLease
         let leases = mesh.match_compute_for_friends(100_010).unwrap();
@@ -3601,16 +3547,10 @@ mod tests {
         assert_eq!(lease.granted_cores, 4);
         assert_eq!(lease.capability, "mlx");
         assert_eq!(lease.spherepop_witness.sphere_depth, 3);
-        assert_eq!(
-            mesh.compute_offers["m1-max-64gb"].available_ram_mb,
-            49_152 - 16_384
-        );
+        assert_eq!(mesh.compute_offers["m1-max-64gb"].available_ram_mb, 49_152 - 16_384);
         assert_eq!(mesh.compute_offers["m1-max-64gb"].available_cores, 6);
         // Friend's emotional wave is lifted to 432 Hz Compassionate!
-        assert_eq!(
-            mesh.peers["friend-air-8gb"].last_wave,
-            WaveVad::compassionate()
-        );
+        assert_eq!(mesh.peers["friend-air-8gb"].last_wave, WaveVad::compassionate());
     }
 
     #[test]
@@ -4101,9 +4041,7 @@ mod tests {
         let decoded = decode_kompress_super_ultra(&compressed).expect("decode s24u 0o0-SSU");
         assert_eq!(decoded, wire.as_bytes());
 
-        let witness = offer
-            .evaluate_spherepop()
-            .expect("valid s24u SpherePop witness");
+        let witness = offer.evaluate_spherepop().expect("valid s24u SpherePop witness");
         assert_eq!(witness.sphere_depth, 3);
 
         let s24u_soul = SoulIdentity::from_constellation_seed(
@@ -4122,8 +4060,7 @@ mod tests {
         .unwrap();
 
         let mut mesh = MemnetMesh::new(s24u_soul.clone(), MtuProfile::SmartTreeSafe1450);
-        mesh.advertise_compute_offer(&s24u_soul, offer, 1_000)
-            .expect("advertise s24u");
+        mesh.advertise_compute_offer(&s24u_soul, offer, 1_000).expect("advertise s24u");
         mesh.request_compute_help(
             &hearth_soul,
             StrugglingFriendSos {
@@ -4153,10 +4090,7 @@ mod tests {
         );
         assert_eq!(f18_addr.geo.as_deref(), Some("cvn78-grid-42"));
         assert_eq!(f18_addr.role.as_deref(), Some("aircraft.f18.ground_ai"));
-        assert_eq!(
-            f18_addr.tags,
-            vec!["radar_diagnostics", "bctl_v3", "cold_start"]
-        );
+        assert_eq!(f18_addr.tags, vec!["radar_diagnostics", "bctl_v3", "cold_start"]);
         assert_eq!(f18_addr.vector_hash, 0x5b2025feed000042);
         assert!(f18_addr.vector_similarity(0x5b2025feed000099) > 0.75);
 
@@ -4216,23 +4150,14 @@ mod tests {
         // Even with abundant bandwidth (50 Mbps), `video.alt_angle` & `audio.crowd_noise` are pruned!
         let abundant_decisions =
             MemnetMesh::shape_adaptive_stream(&chunks, &sub, &PipeCapacity::abundant());
-        assert!(matches!(
-            abundant_decisions[0].1,
-            StreamDeliveryDecision::DeliverEnhanced { .. }
-        ));
+        assert!(matches!(abundant_decisions[0].1, StreamDeliveryDecision::DeliverEnhanced { .. }));
         assert!(matches!(
             abundant_decisions[1].1,
             StreamDeliveryDecision::DeliverEnhanced { .. }
                 | StreamDeliveryDecision::DeliverFull { .. }
         ));
-        assert!(matches!(
-            abundant_decisions[2].1,
-            StreamDeliveryDecision::PrunedByInterest { .. }
-        ));
-        assert!(matches!(
-            abundant_decisions[3].1,
-            StreamDeliveryDecision::PrunedByInterest { .. }
-        ));
+        assert!(matches!(abundant_decisions[2].1, StreamDeliveryDecision::PrunedByInterest { .. }));
+        assert!(matches!(abundant_decisions[3].1, StreamDeliveryDecision::PrunedByInterest { .. }));
 
         // 3. Mid-stream update: an important play involving a favorite player occurs on `video.alt_angle` tile `x12y08`!
         sub.apply_feedback(&PriorityFeedback {
@@ -4267,5 +4192,27 @@ mod tests {
                 summary_text: "Bray just scored".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn test_zero_alloc_streaming_sha256_and_hmac_chunk_invariance() {
+        let mut msg = Vec::with_capacity(512);
+        for i in 0..512u16 {
+            msg.push((i.wrapping_mul(37) & 0xFF) as u8);
+        }
+        let key = b"8b-is-streaming-hmac-verification-key-2026-extended-past-64-bytes-boundary!";
+        let expected_sha = sha256(&msg);
+        let expected_mac = hmac_sha256(key, &msg);
+
+        for chunk_size in [1usize, 3, 7, 16, 31, 55, 56, 63, 64, 65, 127, 256] {
+            let mut hasher = Sha256Hasher::new();
+            let mut mac = HmacSha256::new(key);
+            for part in msg.chunks(chunk_size) {
+                hasher.update(part);
+                mac.update(part);
+            }
+            assert_eq!(hasher.finalize(), expected_sha, "chunk_size={chunk_size}");
+            assert_eq!(mac.finalize(), expected_mac, "chunk_size={chunk_size}");
+        }
     }
 }

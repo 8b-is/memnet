@@ -28,7 +28,7 @@
 use std::collections::HashMap;
 
 use crate::complex_ternary::{self as ct, ComplexWord64, PackConfig};
-use crate::hmac_sha256;
+use crate::{hmac_sha256, HmacSha256};
 
 // ============================================================================
 // 0. GENESIS SEEDS & DOMAIN-SEPARATED CONSTANTS (COLUMN B -> COLUMN A ANCHORS)
@@ -67,22 +67,18 @@ pub const WAVE_GRID_DIM: usize = 64;
 /// Derives the 32-byte `LINOSV` Genesis Root and 8-band `EntheAI` initial phase vector
 /// $\phi \in [0.05, 0.95]^8$ from the acoustic seed and `L-E-A-R-N-I-N-G` axiom.
 pub fn derive_learning_genesis() -> ([u8; 32], [f32; 8]) {
-    let mut material = Vec::new();
-    material.extend_from_slice(ENTROPY_URI.as_bytes());
-    material.push(b'|');
-    material.extend_from_slice(ENTROPY_TRACK.as_bytes());
-    material.push(b'|');
-    material.extend_from_slice(LEARNING_AXIOM.as_bytes());
-    let root = hmac_sha256(b"8b-is::LINOSV::GENESIS::2026", &material);
+    let mut mac = HmacSha256::new(b"8b-is::LINOSV::GENESIS::2026");
+    mac.update(ENTROPY_URI.as_bytes());
+    mac.update(b"|");
+    mac.update(ENTROPY_TRACK.as_bytes());
+    mac.update(b"|");
+    mac.update(LEARNING_AXIOM.as_bytes());
+    let root = mac.finalize();
 
     let mut phase_vector = [0.0f32; 8];
     for i in 0..8 {
-        let chunk = u32::from_le_bytes([
-            root[i * 4],
-            root[i * 4 + 1],
-            root[i * 4 + 2],
-            root[i * 4 + 3],
-        ]);
+        let chunk =
+            u32::from_le_bytes([root[i * 4], root[i * 4 + 1], root[i * 4 + 2], root[i * 4 + 3]]);
         let normalized = (chunk as f64) / (u32::MAX as f64);
         phase_vector[i] = (0.05 + normalized * 0.90) as f32;
     }
@@ -91,13 +87,13 @@ pub fn derive_learning_genesis() -> ([u8; 32], [f32; 8]) {
 
 /// Derives the 32-byte `Aurora` Dyad Genesis Seal (`DyadBond[Peter, Aurora]`).
 pub fn derive_aurora_dyad_seal() -> [u8; 32] {
-    let mut material = Vec::new();
-    material.extend_from_slice(DYAD_GENESIS_SEED.as_bytes());
-    material.extend_from_slice(b"||");
-    material.extend_from_slice(ENTROPY_URI.as_bytes());
-    material.extend_from_slice(b"||");
-    material.extend_from_slice(LEARNING_AXIOM.as_bytes());
-    hmac_sha256(b"FELIX::AURORA::DYAD::GENESIS::2026", &material)
+    let mut mac = HmacSha256::new(b"FELIX::AURORA::DYAD::GENESIS::2026");
+    mac.update(DYAD_GENESIS_SEED.as_bytes());
+    mac.update(b"||");
+    mac.update(ENTROPY_URI.as_bytes());
+    mac.update(b"||");
+    mac.update(LEARNING_AXIOM.as_bytes());
+    mac.finalize()
 }
 
 /// Derives the 32-byte `spherepopfold` v0.1 Paprika state root.
@@ -222,10 +218,7 @@ pub struct HonestAuthState {
 
 impl HonestAuthState {
     pub fn new(master_key: [u8; 32]) -> Self {
-        Self {
-            master_key,
-            bootstrap_nonces: HashMap::new(),
-        }
+        Self { master_key, bootstrap_nonces: HashMap::new() }
     }
 
     /// Registers a single-use bootstrap nonce with a strict TTL (default 30 seconds).
@@ -237,10 +230,8 @@ impl HonestAuthState {
         now_unix: u64,
         ttl_secs: u64,
     ) {
-        self.bootstrap_nonces.insert(
-            nonce.to_string(),
-            (sub.to_string(), caps, now_unix.saturating_add(ttl_secs)),
-        );
+        self.bootstrap_nonces
+            .insert(nonce.to_string(), (sub.to_string(), caps, now_unix.saturating_add(ttl_secs)));
     }
 
     /// Signs a capability ticket with a keyed MAC over `(sub || caps || exp_unix || prev_root)`.
@@ -254,15 +245,10 @@ impl HonestAuthState {
     ) -> CapabilityTicket {
         let exp_unix = now_unix.saturating_add(ttl_secs);
         let mac_tag = self.compute_ticket_mac(sub, caps, exp_unix, &prev_root);
-        CapabilityTicket {
-            sub: sub.to_string(),
-            caps,
-            exp_unix,
-            prev_root,
-            mac_tag,
-        }
+        CapabilityTicket { sub: sub.to_string(), caps, exp_unix, prev_root, mac_tag }
     }
 
+    #[inline]
     fn compute_ticket_mac(
         &self,
         sub: &str,
@@ -270,12 +256,12 @@ impl HonestAuthState {
         exp_unix: u64,
         prev_root: &[u8; 32],
     ) -> [u8; 32] {
-        let mut msg = Vec::with_capacity(sub.len() + 4 + 8 + 32);
-        msg.extend_from_slice(sub.as_bytes());
-        msg.extend_from_slice(&caps.to_le_bytes());
-        msg.extend_from_slice(&exp_unix.to_le_bytes());
-        msg.extend_from_slice(prev_root);
-        hmac_sha256(&self.master_key, &msg)
+        let mut mac = HmacSha256::new(&self.master_key);
+        mac.update(sub.as_bytes());
+        mac.update(&caps.to_le_bytes());
+        mac.update(&exp_unix.to_le_bytes());
+        mac.update(prev_root);
+        mac.finalize()
     }
 
     /// Constant-time 32-byte tag comparison so MAC verification leaks no timing side-channel.
@@ -319,12 +305,8 @@ impl HonestAuthState {
         if let Some((sub, caps, exp)) = self.bootstrap_nonces.remove(raw_token) {
             if exp > now_unix {
                 let ticket = self.sign_ticket(&sub, caps, now_unix, 28_800, prev_root);
-                let mac_hex: String = ticket
-                    .mac_tag
-                    .iter()
-                    .take(16)
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
+                let mac_hex: String =
+                    ticket.mac_tag.iter().take(16).map(|b| format!("{b:02x}")).collect();
                 let cookie = format!(
                     "__Host-honest_cap={}:{}:{}:{}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800",
                     ticket.sub, ticket.caps, ticket.exp_unix, mac_hex
@@ -394,6 +376,7 @@ pub struct MemnetFrameHeader64 {
 }
 
 impl MemnetFrameHeader64 {
+    #[inline]
     pub fn seal(
         master_key: &[u8; 32],
         prev_state_root: [u8; 32],
@@ -401,16 +384,13 @@ impl MemnetFrameHeader64 {
         cap_mask: u32,
         payload: &[u8],
     ) -> Self {
-        let mut buf = Vec::with_capacity(32 + 8 + 4 + payload.len());
-        buf.extend_from_slice(&prev_state_root);
-        buf.extend_from_slice(&epoch.to_le_bytes());
-        buf.extend_from_slice(&cap_mask.to_le_bytes());
-        buf.extend_from_slice(payload);
-        let keyed_mac = hmac_sha256(master_key, &buf);
-        Self {
-            prev_state_root,
-            keyed_mac,
-        }
+        let mut mac = HmacSha256::new(master_key);
+        mac.update(&prev_state_root);
+        mac.update(&epoch.to_le_bytes());
+        mac.update(&cap_mask.to_le_bytes());
+        mac.update(payload);
+        let keyed_mac = mac.finalize();
+        Self { prev_state_root, keyed_mac }
     }
 
     pub fn to_bytes(&self) -> [u8; 64] {
@@ -425,10 +405,7 @@ impl MemnetFrameHeader64 {
         let mut keyed_mac = [0u8; 32];
         prev_state_root.copy_from_slice(&raw[0..32]);
         keyed_mac.copy_from_slice(&raw[32..64]);
-        Self {
-            prev_state_root,
-            keyed_mac,
-        }
+        Self { prev_state_root, keyed_mac }
     }
 
     /// Verifies the 64-byte frame header and required capability bit in $O(1)$ space.
@@ -468,12 +445,7 @@ pub struct EntheAiState {
 impl Default for EntheAiState {
     fn default() -> Self {
         let (_root, phase_vector) = derive_learning_genesis();
-        Self {
-            coherence: 0.85,
-            plasticity: 0.25,
-            phase_vector,
-            epoch: 1,
-        }
+        Self { coherence: 0.85, plasticity: 0.25, phase_vector, epoch: 1 }
     }
 }
 
@@ -733,10 +705,10 @@ pub struct Mem8WaveGrid {
 
 impl Mem8WaveGrid {
     pub fn genesis(profile_key: &[u8; 32], linosv_root: &[u8; 32]) -> Self {
-        let mut msg = Vec::with_capacity(21 + 32);
-        msg.extend_from_slice(b"mem8::wave::genesis::");
-        msg.extend_from_slice(linosv_root);
-        let state_root = hmac_sha256(profile_key, &msg);
+        let mut mac = HmacSha256::new(profile_key);
+        mac.update(b"mem8::wave::genesis::");
+        mac.update(linosv_root);
+        let state_root = mac.finalize();
 
         Self {
             epoch: 0,
@@ -749,15 +721,19 @@ impl Mem8WaveGrid {
         }
     }
 
-    /// Computes the keyed provenance digest over `(epoch || prev_root || u_curr)`.
+    /// Computes the keyed provenance digest over `(epoch || prev_root || u_curr)` with zero heap allocations.
     pub fn compute_state_root(&self, profile_key: &[u8; 32]) -> [u8; 32] {
-        let mut buf = Vec::with_capacity(8 + 32 + self.u_curr.len() * 4);
-        buf.extend_from_slice(&self.epoch.to_le_bytes());
-        buf.extend_from_slice(&self.prev_root);
-        for &val in &self.u_curr {
-            buf.extend_from_slice(&val.to_bits().to_le_bytes());
+        let mut mac = HmacSha256::new(profile_key);
+        mac.update(&self.epoch.to_le_bytes());
+        mac.update(&self.prev_root);
+        let mut row_buf = [0u8; WAVE_GRID_DIM * 4];
+        for row in self.u_curr.chunks_exact(WAVE_GRID_DIM) {
+            for (i, &val) in row.iter().enumerate() {
+                row_buf[i * 4..i * 4 + 4].copy_from_slice(&val.to_bits().to_le_bytes());
+            }
+            mac.update(&row_buf);
         }
-        hmac_sha256(profile_key, &buf)
+        mac.finalize()
     }
 
     /// Injects a sensory/N-gram impulse into the user's private 2D wave grid,
@@ -848,11 +824,7 @@ pub fn spherepop_fold_64(
     for i in 0..64 {
         norm_sq += latent_re[i] * latent_re[i] + latent_im[i] * latent_im[i];
     }
-    let inv_norm = if norm_sq > 1e-12 {
-        1.0 / norm_sq.sqrt()
-    } else {
-        1.0
-    };
+    let inv_norm = if norm_sq > 1e-12 { 1.0 / norm_sq.sqrt() } else { 1.0 };
     // Scale unit-sphere coordinates by sqrt(64) = 8.0 so RMS amplitude is ~1.0
     let scale = 8.0 * inv_norm;
     let mut u = [0.0f32; 64];
@@ -862,22 +834,9 @@ pub fn spherepop_fold_64(
         v[i] = latent_im[i] * scale;
     }
 
-    let words = ct::pack_row_sigma_delta(
-        &u,
-        &v,
-        PackConfig {
-            gamma: 1.0,
-            carrier_rad,
-        },
-    );
-    let word = words[0];
+    let word = ct::pack_word64_sigma_delta(&u, &v, PackConfig { gamma: 1.0, carrier_rad });
     let paprika_root = derive_spherepopfold_root();
-    let seal = ct::waking_seal(
-        &paprika_root,
-        &[word],
-        (64 - word.non_zero_marks()) as u64,
-        65_536,
-    );
+    let seal = ct::waking_seal(&paprika_root, &[word], (64 - word.non_zero_marks()) as u64, 65_536);
     (word, seal)
 }
 
@@ -1005,19 +964,12 @@ pub struct EssenceSubspaceTable {
 impl EssenceSubspaceTable {
     /// Allocates the `1.01 MiB` (`16,336 × 65 B`) `BFP-64` subspace table directly on the heap.
     pub fn new_zeroed(essence_id: &'static str, mu_odd_multipliers: [u64; 4]) -> Self {
-        let zero_row = Bfp64Row {
-            shared_exp: 111,
-            mantissas: [0i8; BFP64_DIM],
-        };
+        let zero_row = Bfp64Row { shared_exp: 111, mantissas: [0i8; BFP64_DIM] };
         let rows: Box<[Bfp64Row; TOTAL_ENGRAM_ROWS]> = vec![zero_row; TOTAL_ENGRAM_ROWS]
             .into_boxed_slice()
             .try_into()
             .expect("exact TOTAL_ENGRAM_ROWS length");
-        Self {
-            essence_id,
-            mu_odd_multipliers,
-            rows,
-        }
+        Self { essence_id, mu_odd_multipliers, rows }
     }
 }
 
@@ -1029,10 +981,7 @@ pub struct EssenceMux {
 
 impl EssenceMux {
     pub fn new(voices: Vec<EssenceSubspaceTable>) -> Self {
-        Self {
-            voices,
-            active_idx: std::sync::atomic::AtomicUsize::new(0),
-        }
+        Self { voices, active_idx: std::sync::atomic::AtomicUsize::new(0) }
     }
 
     /// Zero-allocation context pointer swap (`< 5 microseconds`, single `AtomicUsize` store).
@@ -1041,8 +990,7 @@ impl EssenceMux {
         if target_idx >= self.voices.len() {
             return Err("E_ESSENCE_OUT_OF_BOUNDS");
         }
-        self.active_idx
-            .store(target_idx, std::sync::atomic::Ordering::Release);
+        self.active_idx.store(target_idx, std::sync::atomic::Ordering::Release);
         Ok(self.voices[target_idx].essence_id)
     }
 
@@ -1072,10 +1020,7 @@ mod tests {
         assert_eq!(root1, root2, "LINOSV genesis root must be deterministic");
         assert_eq!(phases1, phases2);
         for (band, &p) in phases1.iter().enumerate() {
-            assert!(
-                (0.05..=0.95).contains(&p),
-                "band {band} phase {p} out of [0.05, 0.95]"
-            );
+            assert!((0.05..=0.95).contains(&p), "band {band} phase {p} out of [0.05, 0.95]");
         }
 
         let aurora_seal = derive_aurora_dyad_seal();
@@ -1148,10 +1093,7 @@ mod tests {
         // the admissibility predicate denies AyeosGenesis because the capability bit is absent.
         let verdict_missing_cap =
             auth.evaluate_admissibility(1.0, &ticket, CapMask::AyeosGenesis, 1_700_000_050, 10, 10);
-        assert_eq!(
-            verdict_missing_cap,
-            ExecutionVerdict::DeniedMissingCapability
-        );
+        assert_eq!(verdict_missing_cap, ExecutionVerdict::DeniedMissingCapability);
 
         // Even with ReadDream present and J(a, h) = 1.0, an out-of-order epoch is rejected.
         let verdict_epoch =
@@ -1262,19 +1204,13 @@ mod tests {
         // Verify XOF stream encryption round-trip
         let ciphertext = vault_peter.encrypt_table_bytes();
         let raw_i8_as_u8: Vec<u8> = vault_peter.engram_table.iter().map(|&x| x as u8).collect();
-        assert_ne!(
-            ciphertext, raw_i8_as_u8,
-            "ciphertext must not equal plaintext"
-        );
+        assert_ne!(ciphertext, raw_i8_as_u8, "ciphertext must not equal plaintext");
 
         vault_peter.engram_table.fill(0);
         vault_peter.decrypt_table_bytes(&ciphertext);
         let mut peter_restored = [0.0f32; D_MODEL];
         vault_peter.lookup_engram(&ngram, &mut peter_restored);
-        assert_eq!(
-            peter_read, peter_restored,
-            "encrypted round-trip is bit-exact"
-        );
+        assert_eq!(peter_read, peter_restored, "encrypted round-trip is bit-exact");
 
         // Verify RAM scrubbing zeroes everything
         vault_peter.scrub_ram();

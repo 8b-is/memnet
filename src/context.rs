@@ -473,12 +473,7 @@ pub fn detect_project_context(root_path: &Path) -> Option<String> {
 fn read_cargo_toml(root_path: &Path, buf: &mut [u8; MAX_PROBE_BYTES]) -> Option<String> {
     let content = read_head_stack(root_path, "Cargo.toml", buf)?;
     let (name, desc) = scan_toml_section(content, "package");
-    Some(format_labeled_truncated(
-        "Rust",
-        Some(name?),
-        desc?,
-        PqBudget::MANIFEST_80,
-    ))
+    Some(format_labeled_truncated("Rust", Some(name?), desc?, PqBudget::MANIFEST_80))
 }
 
 fn read_package_json(root_path: &Path, buf: &mut [u8; MAX_PROBE_BYTES]) -> Option<String> {
@@ -488,12 +483,7 @@ fn read_package_json(root_path: &Path, buf: &mut [u8; MAX_PROBE_BYTES]) -> Optio
         return None;
     }
     let desc_str = desc.unwrap_or("No description");
-    Some(format_labeled_truncated(
-        "Node",
-        Some(name?),
-        desc_str,
-        PqBudget::MANIFEST_80,
-    ))
+    Some(format_labeled_truncated("Node", Some(name?), desc_str, PqBudget::MANIFEST_80))
 }
 
 fn read_pyproject_toml(root_path: &Path, buf: &mut [u8; MAX_PROBE_BYTES]) -> Option<String> {
@@ -501,22 +491,12 @@ fn read_pyproject_toml(root_path: &Path, buf: &mut [u8; MAX_PROBE_BYTES]) -> Opt
 
     let (proj_name, proj_desc) = scan_toml_section(content, "project");
     if let (Some(name), Some(desc)) = (proj_name, proj_desc) {
-        return Some(format_labeled_truncated(
-            "Python",
-            Some(name),
-            desc,
-            PqBudget::MANIFEST_80,
-        ));
+        return Some(format_labeled_truncated("Python", Some(name), desc, PqBudget::MANIFEST_80));
     }
 
     let (poetry_name, poetry_desc) = scan_toml_section(content, "tool.poetry");
     if let (Some(name), Some(desc)) = (poetry_name, poetry_desc) {
-        return Some(format_labeled_truncated(
-            "Python",
-            Some(name),
-            desc,
-            PqBudget::MANIFEST_80,
-        ));
+        return Some(format_labeled_truncated("Python", Some(name), desc, PqBudget::MANIFEST_80));
     }
 
     None
@@ -538,22 +518,11 @@ fn read_git_description(root_path: &Path, buf: &mut [u8; MAX_PROBE_BYTES]) -> Op
     if desc.is_empty() || desc.contains("Unnamed repository") {
         return None;
     }
-    Some(format_labeled_truncated(
-        "Git",
-        None,
-        desc,
-        PqBudget::MANIFEST_80,
-    ))
+    Some(format_labeled_truncated("Git", None, desc, PqBudget::MANIFEST_80))
 }
 
 fn read_readme(root_path: &Path, buf: &mut [u8; MAX_PROBE_BYTES]) -> Option<String> {
-    const README_NAMES: [&str; 5] = [
-        "README.md",
-        "README.MD",
-        "readme.md",
-        "README",
-        "README.txt",
-    ];
+    const README_NAMES: [&str; 5] = ["README.md", "README.MD", "readme.md", "README", "README.txt"];
 
     for &name in &README_NAMES {
         let Some(content) = read_head_stack(root_path, name, buf) else {
@@ -619,30 +588,17 @@ mod tests {
 
     #[test]
     fn test_detect_project_context_across_formats() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("memnet_ctx_test_{nonce}"));
         fs::create_dir_all(&dir).unwrap();
 
         // 1. README fallback
         fs::write(dir.join("README.md"), "# Title\n\nSovereign mesh node.\n").unwrap();
-        assert_eq!(
-            detect_project_context(&dir).as_deref(),
-            Some("Sovereign mesh node.")
-        );
+        assert_eq!(detect_project_context(&dir).as_deref(), Some("Sovereign mesh node."));
 
         // 2. Go module
-        fs::write(
-            dir.join("go.mod"),
-            "module github.com/8b-is/enthea\n\ngo 1.22\n",
-        )
-        .unwrap();
-        assert_eq!(
-            detect_project_context(&dir).as_deref(),
-            Some("Go: github.com/8b-is/enthea")
-        );
+        fs::write(dir.join("go.mod"), "module github.com/8b-is/enthea\n\ngo 1.22\n").unwrap();
+        assert_eq!(detect_project_context(&dir).as_deref(), Some("Go: github.com/8b-is/enthea"));
 
         // 3. Python pyproject.toml
         fs::write(
