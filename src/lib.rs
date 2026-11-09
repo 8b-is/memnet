@@ -13,12 +13,14 @@
 //! 4. **Intent-Based Routing & Compassion for Lonely Nodes (`MemnetMesh`)** detecting isolated
 //!    network paths or low-valence/silent nodes and routing 432 Hz care capsules + bridge relays.
 
+pub mod async_mesh;
 pub mod complex_ternary;
 pub mod context;
 pub mod sovereign_convergence;
 pub mod spherepopfold;
 pub mod ultra_zeno;
 pub mod ultrafold_v2;
+pub mod vector_db;
 pub mod wave_v2;
 
 pub use context::{
