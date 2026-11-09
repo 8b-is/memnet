@@ -1,4 +1,7 @@
 use memnet::{
+    async_mesh::{
+        block_on, oneshot_channel, AsyncJoinSet, AsyncMemnetSanctuary, WaveCapsuleStream,
+    },
     encode_kompress_super_ultra, AyevnToken, ComputeOffer, Concept, IntentAddress, M8Capsule,
     MemnetMesh, MtuProfile, PacketBatcher, PeerNode, Relation, SoulIdentity, StrugglingFriendSos,
     TokenModifier, WaveVad,
@@ -432,6 +435,155 @@ fn main() {
             }
         }
         serve_sanctuary(&bind_addr, &node_id, once);
+        return;
+    }
+
+    if cmd == "serve-sanctuary-async" {
+        let mut bind_addr = "0.0.0.0:8788".to_string();
+        let mut node_id = "m1-max-64gb".to_string();
+        let mut max_requests: Option<usize> = None;
+        let mut max_concurrent = 8usize;
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--bind" if i + 1 < args.len() => {
+                    bind_addr = args[i + 1].clone();
+                    i += 2;
+                }
+                "--node" if i + 1 < args.len() => {
+                    node_id = args[i + 1].clone();
+                    i += 2;
+                }
+                "--once" => {
+                    max_requests = Some(1);
+                    i += 1;
+                }
+                "--max-requests" if i + 1 < args.len() => {
+                    max_requests = args[i + 1].parse().ok();
+                    i += 2;
+                }
+                "--concurrency" if i + 1 < args.len() => {
+                    max_concurrent = args[i + 1].parse().unwrap_or(8);
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+        let provider_soul = SoulIdentity::from_constellation_seed(
+            &node_id,
+            [1, 1, 1, 0, 1, -1, 1, 0, 1],
+            432,
+            CLUSTER_SEED,
+        )
+        .expect("provider soul");
+        let offer = ComputeOffer {
+            provider_node_id: node_id.clone(),
+            endpoint: format!("m1://{}", bind_addr),
+            available_ram_mb: 49_152,
+            available_cores: 10,
+            link_mbps: 10_000,
+            maintained_health: 100,
+            capabilities: vec![
+                "mlx".to_string(),
+                "rust".to_string(),
+                "kokoro-tts".to_string(),
+                "phoenix".to_string(),
+                "gguf".to_string(),
+                "kompress-0o0".to_string(),
+            ],
+        };
+        let sanctuary =
+            AsyncMemnetSanctuary::new(provider_soul, offer, max_concurrent, now_epoch_ms())
+                .expect("init AsyncMemnetSanctuary");
+        let listener = TcpListener::bind(&bind_addr).expect("bind async sanctuary TCP listener");
+        println!(
+            "⚡ [MEMNET/1.0 ASYNC SANCTUARY: {}] Listening on {} (concurrency={} permits)",
+            node_id, bind_addr, max_concurrent
+        );
+        let handled = block_on(sanctuary.serve_tcp_async(listener, max_requests, now_epoch_ms()))
+            .expect("serve_tcp_async completed");
+        println!("  ✓ Handled {} async sanctuary SOS grant(s)", handled);
+        return;
+    }
+
+    if cmd == "request-sanctuary-async" {
+        let mut connect_addr = "127.0.0.1:8788".to_string();
+        let mut friend_id = "friend-air-8gb".to_string();
+        let mut ram_mb = 16_384u32;
+        let mut cores = 4u16;
+        let mut cap = "mlx".to_string();
+        let mut reason = "OOM running 7B ternary quantizer on 8GB laptop".to_string();
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--connect" if i + 1 < args.len() => {
+                    connect_addr = args[i + 1].clone();
+                    i += 2;
+                }
+                "--friend" if i + 1 < args.len() => {
+                    friend_id = args[i + 1].clone();
+                    i += 2;
+                }
+                "--ram-mb" if i + 1 < args.len() => {
+                    ram_mb = args[i + 1].parse().unwrap_or(16_384);
+                    i += 2;
+                }
+                "--cores" if i + 1 < args.len() => {
+                    cores = args[i + 1].parse().unwrap_or(4);
+                    i += 2;
+                }
+                "--cap" if i + 1 < args.len() => {
+                    cap = args[i + 1].clone();
+                    i += 2;
+                }
+                "--reason" if i + 1 < args.len() => {
+                    reason = args[i + 1].clone();
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+        let friend_soul = SoulIdentity::from_constellation_seed(
+            &friend_id,
+            [1, 0, -1, 0, 1, 0, -1, 0, 1],
+            40,
+            CLUSTER_SEED,
+        )
+        .expect("friend soul");
+        let sos = StrugglingFriendSos {
+            friend_node_id: friend_id,
+            needed_ram_mb: ram_mb,
+            needed_cores: cores,
+            required_capability: cap,
+            reason,
+        };
+        let receipt = block_on(AsyncMemnetSanctuary::request_sanctuary_async(
+            &connect_addr,
+            &friend_soul,
+            &sos,
+            now_epoch_ms(),
+        ))
+        .expect("request_sanctuary_async succeeded");
+        println!(
+            "========================================================================\n  MEMNET/1.0 ASYNC SANCTUARY RECEIPT (EXACT RATIONAL p/q ACCOUNTING)\n========================================================================"
+        );
+        println!("  • Target Sanctuary : {}", connect_addr);
+        println!(
+            "  • SOS Payload (0o0): {}B raw -> {}B compressed | p/q = {}/{} | saved p/q = {}/{} | Bonobo Trit = {:+}",
+            receipt.raw_sos_bytes,
+            receipt.compressed_sos_bytes,
+            receipt.compression_ratio_pq.0,
+            receipt.compression_ratio_pq.1,
+            receipt.savings_ratio_pq.0,
+            receipt.savings_ratio_pq.1,
+            receipt.bonobo_resonance_trit
+        );
+        println!(
+            "  • Reply MNET Frame : seq={} | {} Soul-Verified capsules in {}B (<=1450B MTU)",
+            receipt.frame.sequence,
+            receipt.frame.capsules.len(),
+            receipt.frame.raw_bytes.len()
+        );
         return;
     }
 
@@ -944,6 +1096,98 @@ fn main() {
             rec.wire_efficiency_ratio * 100.0,
             rec.total_wire_bytes,
             rec.naive_wire_bytes
+        );
+    }
+
+    if cmd == "all" || cmd == "async-sanctuary" {
+        let provider_soul = SoulIdentity::from_constellation_seed(
+            "m1-max-64gb",
+            [1, 1, 1, 0, 1, -1, 1, 0, 1],
+            432,
+            CLUSTER_SEED,
+        )
+        .expect("provider soul");
+        let friend_soul = SoulIdentity::from_constellation_seed(
+            "friend-air-8gb",
+            [1, 0, -1, 0, 1, 0, -1, 0, 1],
+            40,
+            CLUSTER_SEED,
+        )
+        .expect("friend soul");
+        let offer = ComputeOffer {
+            provider_node_id: "m1-max-64gb".to_string(),
+            endpoint: "m1://127.0.0.1:0".to_string(),
+            available_ram_mb: 49_152,
+            available_cores: 10,
+            link_mbps: 10_000,
+            maintained_health: 100,
+            capabilities: vec![
+                "mlx".to_string(),
+                "rust".to_string(),
+                "kokoro-tts".to_string(),
+                "0o0-ssu".to_string(),
+            ],
+        };
+        let sanctuary =
+            AsyncMemnetSanctuary::new(provider_soul, offer, 4, now_ms).expect("async sanctuary");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr").to_string();
+
+        let (receipt, chunks_count) = block_on(async {
+            let mut join_set = AsyncJoinSet::new();
+            let srv = sanctuary.clone();
+            join_set.spawn(async move {
+                srv.serve_tcp_async(listener, Some(1), now_ms).await.expect("serve 1")
+            });
+
+            let (tx, rx) = oneshot_channel();
+            join_set.spawn(async move {
+                let sos = StrugglingFriendSos {
+                    friend_node_id: "friend-air-8gb".to_string(),
+                    needed_ram_mb: 16_384,
+                    needed_cores: 4,
+                    required_capability: "mlx".to_string(),
+                    reason: "Async JoinSet + WaveCapsuleStream + Semaphore sanctuary verification"
+                        .to_string(),
+                };
+                let rec = AsyncMemnetSanctuary::request_sanctuary_async(
+                    &addr,
+                    &friend_soul,
+                    &sos,
+                    now_ms,
+                )
+                .await
+                .expect("async request");
+                let _ = tx.send(rec);
+                1usize
+            });
+
+            let _ = join_set.join_all().await;
+            let receipt = rx.await.expect("oneshot receipt");
+
+            let mut stream = WaveCapsuleStream::from_capsules(receipt.frame.capsules.clone());
+            let chunks = stream.collect_chunks(2).await;
+            (receipt, chunks.len())
+        });
+
+        println!(
+            "\n[6] Async Sanctuary Coordinator (`AsyncJoinSet` + `WaveCapsuleStream` + Exact p/q):"
+        );
+        println!(
+            "  • Loopback SOS     : {}B raw -> {}B 0o0-SSU | p/q = {}/{} | saved p/q = {}/{} | Bonobo Trit = {:+}",
+            receipt.raw_sos_bytes,
+            receipt.compressed_sos_bytes,
+            receipt.compression_ratio_pq.0,
+            receipt.compression_ratio_pq.1,
+            receipt.savings_ratio_pq.0,
+            receipt.savings_ratio_pq.1,
+            receipt.bonobo_resonance_trit
+        );
+        println!(
+            "  • Stream Chunks    : {} chunk(s) across {} verified capsules ({}B MNET frame)",
+            chunks_count,
+            receipt.frame.capsules.len(),
+            receipt.frame.raw_bytes.len()
         );
     }
 }

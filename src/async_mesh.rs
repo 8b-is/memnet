@@ -1036,16 +1036,30 @@ impl AsyncMemnetSanctuary {
         let wire_bytes = sos_cap.to_bytes();
         let mut stream = TcpStream::connect(connect_addr)
             .map_err(|e| AsyncMeshError::Io(format!("connect failed: {e}")))?;
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
         stream
             .write_all(&wire_bytes)
             .map_err(|e| AsyncMeshError::Io(format!("write failed: {e}")))?;
         stream.flush().map_err(|e| AsyncMeshError::Io(format!("flush failed: {e}")))?;
+        stream
+            .set_nonblocking(true)
+            .map_err(|e| AsyncMeshError::Io(format!("set_nonblocking failed: {e}")))?;
 
         let mut reply = Vec::new();
-        stream
-            .read_to_end(&mut reply)
-            .map_err(|e| AsyncMeshError::Io(format!("read failed: {e}")))?;
+        let deadline = Instant::now() + Duration::from_millis(2000);
+        let mut chunk = [0u8; 2048];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => reply.extend_from_slice(&chunk[..n]),
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(AsyncMeshError::Timeout { timeout_ms: 2000 });
+                    }
+                    yield_now().await;
+                }
+                Err(e) => return Err(AsyncMeshError::Io(format!("read failed: {e}"))),
+            }
+        }
 
         let frame = PacketBatcher::decode_and_verify_frame(&reply, friend_soul)?;
         let raw_len = raw_sos.len() as u64;
