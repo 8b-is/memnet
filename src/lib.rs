@@ -22,6 +22,7 @@ pub mod ultra_zeno;
 pub mod ultrafold_v2;
 pub mod vector_db;
 pub mod wave_v2;
+pub mod wici_gpu;
 
 pub use context::{
     count_utf8_leads_asm64, detect_project_context, truncate_string, utf8_lead_mask_nand64,
@@ -55,6 +56,9 @@ pub enum Concept {
     ComputeOffer = 0x71,
     ComputeSos = 0x72,
     ComputeGrant = 0x73,
+    WiciGpuBatch = 0x74,
+    WiciTraceReplay = 0x75,
+    WiciMoeExpertCache = 0x76,
     LedgerState = 0x80,
     Custom(u8),
 }
@@ -79,6 +83,9 @@ impl Concept {
             Self::ComputeOffer => 0x71,
             Self::ComputeSos => 0x72,
             Self::ComputeGrant => 0x73,
+            Self::WiciGpuBatch => 0x74,
+            Self::WiciTraceReplay => 0x75,
+            Self::WiciMoeExpertCache => 0x76,
             Self::LedgerState => 0x80,
             Self::Custom(v) => v,
         }
@@ -103,6 +110,9 @@ impl Concept {
             0x71 => Self::ComputeOffer,
             0x72 => Self::ComputeSos,
             0x73 => Self::ComputeGrant,
+            0x74 => Self::WiciGpuBatch,
+            0x75 => Self::WiciTraceReplay,
+            0x76 => Self::WiciMoeExpertCache,
             0x80 => Self::LedgerState,
             other => Self::Custom(other),
         }
@@ -307,6 +317,9 @@ impl AyevnToken {
             Concept::ComputeOffer => "⚡",
             Concept::ComputeSos => "🆘",
             Concept::ComputeGrant => "🎁",
+            Concept::WiciGpuBatch => "📡",
+            Concept::WiciTraceReplay => "🔁",
+            Concept::WiciMoeExpertCache => "🧠",
             Concept::LedgerState => "⚖️",
             Concept::Custom(_) => "🌐",
         };
