@@ -1,6 +1,6 @@
 [package]
 name = "memnet"
-version = "1.2.1"
+version = "1.2.2"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Peter Lodri <peter@8b.is>", "8bit-Wraith <wraith@8b.is>"]
